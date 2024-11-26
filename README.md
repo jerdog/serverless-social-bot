@@ -2,6 +2,8 @@
 
 A Node.js-based serverless bot that generates and posts content to multiple social media platforms using Markov chains. The bot creates natural-sounding posts by learning from existing content while maintaining platform-specific constraints.
 
+Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
+
 ## Features
 
 - **Markov Chain Text Generation**
@@ -74,6 +76,9 @@ A Node.js-based serverless bot that generates and posts content to multiple soci
    MARKOV_MIN_CHARS=100
    MARKOV_MAX_CHARS=280
 
+   # Content Filtering
+   EXCLUDED_WORDS=["word1","word2","word3"]
+
    # Debug Settings
    DEBUG_MODE=true
    DEBUG_LEVEL='verbose'
@@ -95,58 +100,67 @@ A Node.js-based serverless bot that generates and posts content to multiple soci
 
 Note: The bot has a 30% chance of generating and posting content each time it runs. This randomness helps create a more natural posting pattern and prevents overwhelming your social media feeds. When the script runs but doesn't post, it will log a message indicating the random check failed.
 
-## Configuration
+## Environment Variables
 
-### Markov Chain Settings
+Copy `.env-example` to `.env` and configure the following variables:
 
-The Markov chain generator can be fine-tuned using these parameters:
-
-- `MARKOV_STATE_SIZE`: Controls how many words the generator looks at to determine the next word. 
-  - Default: 2 (looks at pairs of words)
-  - Higher values (3+) create more coherent but less creative text
-  - Lower values (1) create more random, less coherent text
-  - Example: With state size 2, in "the quick brown fox", to predict the next word after "brown", it looks at "quick brown"
-
-- `MARKOV_MAX_TRIES`: Maximum number of attempts to generate a valid post.
-  - Default: 100
-  - Higher values give better chances of meeting length requirements
-  - Lower values make the generation process faster but might fail more often
-  - The generator will stop either when it creates a valid post or hits this limit
-
-- `MARKOV_MIN_CHARS`: Minimum number of characters for a generated post.
-  - Default: 100
-  - Ensures posts have sufficient content
-  - Posts shorter than this will be rejected and the generator will try again
-  - Should be set based on your content style and platform requirements
-
-- `MARKOV_MAX_CHARS`: Maximum number of characters for a generated post.
-  - Default: 280 (Twitter/X/Bluesky limit)
-  - Ensures posts fit platform constraints
-  - Generator will stop adding words when approaching this limit
-  - Should match the lowest character limit of your target platforms
-
-### Debug Settings
-
-- `DEBUG_MODE`: Enable/disable debug output (true/false)
-  - When true: Shows generation process and skips posting
-  - When false: Posts to social media platforms
-
-- `DEBUG_LEVEL`: Logging detail level
-  - 'info': Basic operation logging
-  - 'verbose': Detailed generation attempts and API responses
-
-### Platform Settings
+### Authentication
 
 #### Bluesky
 - `BLUESKY_USERNAME`: Your Bluesky handle (e.g., "username.bsky.social")
 - `BLUESKY_PASSWORD`: Your Bluesky app password
-- `BLUESKY_API_URL`: Bluesky API endpoint (usually "https://bsky.social")
-- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from
+- `BLUESKY_API_URL`: Bluesky API URL (default: "https://bsky.social")
+- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from (e.g., `["@user1.bsky.social"]`)
 
 #### Mastodon
-- `MASTODON_ACCESS_TOKEN`: Your Mastodon API access token
-- `MASTODON_API_URL`: Your Mastodon instance URL
-- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon access token
+- `MASTODON_API_URL`: Your Mastodon instance API URL
+- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from (e.g., `["@user@instance.social"]`)
+
+### Content Generation
+
+#### Markov Chain Settings
+- `MARKOV_STATE_SIZE`: Number of words to consider for next word prediction (default: 2)
+- `MARKOV_MAX_TRIES`: Maximum attempts to generate valid content (default: 100)
+- `MARKOV_MIN_CHARS`: Minimum characters in generated post (default: 100)
+- `MARKOV_MAX_CHARS`: Maximum characters in generated post (default: 280)
+
+#### Content Filtering
+- `EXCLUDED_WORDS`: Array of words to exclude from generated posts (e.g., `["word1","word2"]`)
+  - Case-insensitive matching
+  - Matches whole words only
+  - Optional, defaults to empty array
+
+### Debug Settings
+- `DEBUG_MODE`: Enable debug output (true/false)
+- `DEBUG_LEVEL`: Debug verbosity level ("info"/"verbose"/"essential")
+
+Example `.env` file:
+```env
+# Bluesky Credentials
+BLUESKY_USERNAME="username.bsky.social"
+BLUESKY_PASSWORD="app-password"
+BLUESKY_API_URL="https://bsky.social"
+BLUESKY_SOURCE_ACCOUNTS=["@user1.bsky.social"]
+
+# Mastodon Credentials
+MASTODON_ACCESS_TOKEN="your-access-token"
+MASTODON_API_URL="https://instance.social"
+MASTODON_SOURCE_ACCOUNTS=["@user@instance.social"]
+
+# Markov Chain Configuration
+MARKOV_STATE_SIZE=2
+MARKOV_MAX_TRIES=100
+MARKOV_MIN_CHARS=100
+MARKOV_MAX_CHARS=280
+
+# Content Filtering
+EXCLUDED_WORDS=["word1","word2","word3"]
+
+# Debug Settings
+DEBUG_MODE=false
+DEBUG_LEVEL="info"
+```
 
 ## Security
 

@@ -14,6 +14,9 @@ const CONFIG = {
     markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
     markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
     
+    // Content filtering
+    excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
+    
     // Bluesky settings
     blueskyUsername: process.env.BLUESKY_USERNAME,
     blueskyPassword: process.env.BLUESKY_PASSWORD,
@@ -28,7 +31,25 @@ const CONFIG = {
 
 // Utility Functions
 function debug(message, level = 'info', data = null) {
-    if (!CONFIG.debug && level !== 'error') return;
+    // Always show errors
+    if (level === 'error') {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [ERROR] ${message}`);
+        if (data) console.log(data);
+        return;
+    }
+
+    // In non-debug mode, only show essential info
+    if (!CONFIG.debug) {
+        if (level === 'essential') {
+            const timestamp = new Date().toISOString();
+            console.log(`[${timestamp}] ${message}`);
+            if (data) console.log(data);
+        }
+        return;
+    }
+
+    // In debug mode, show everything based on debug level
     if (CONFIG.debugLevel === 'info' && level === 'verbose') return;
 
     const timestamp = new Date().toISOString();
@@ -64,7 +85,8 @@ function cleanText(text) {
     // First decode HTML entities
     text = decodeHtmlEntities(text);
 
-    return text
+    // Basic cleaning
+    text = text
         // Remove URLs
         .replace(/(https?:\/\/[^\s]+)|(www\.[^\s]+)/g, '')
         // Remove mentions (@username)
@@ -74,6 +96,14 @@ function cleanText(text) {
         // Remove multiple spaces and trim
         .replace(/\s+/g, ' ')
         .trim();
+
+    // Remove excluded words
+    if (CONFIG.excludedWords.length > 0) {
+        const excludedWordsRegex = new RegExp(`\\b(${CONFIG.excludedWords.join('|')})\\b`, 'gi');
+        text = text.replace(excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
+    }
+
+    return text;
 }
 
 // Markov Chain Implementation
@@ -184,6 +214,29 @@ async function getBlueskyAuth() {
         return data.accessJwt;
     } catch (error) {
         debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
+        return null;
+    }
+}
+
+async function getBlueskyDid() {
+    try {
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (data.error) {
+            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
+            return null;
+        }
+
+        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
+        return data.did;
+    } catch (error) {
+        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
         return null;
     }
 }
@@ -322,66 +375,131 @@ async function postToMastodon(content) {
 }
 
 async function postToBluesky(content) {
-    const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Basic ${Buffer.from(`${CONFIG.blueskyUsername}:${CONFIG.blueskyPassword}`).toString('base64')}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            repo: CONFIG.blueskyUsername,
-            collection: 'app.bsky.feed.post',
-            record: {
-                text: content,
-                createdAt: new Date().toISOString()
-            }
-        })
-    });
-    return await response.json();
+    try {
+        // Get auth token
+        const token = await getBlueskyAuth();
+        if (!token) {
+            debug('Failed to authenticate with Bluesky', 'error');
+            return false;
+        }
+
+        // Get DID
+        const did = await getBlueskyDid();
+        if (!did) {
+            debug('Failed to resolve Bluesky DID', 'error');
+            return false;
+        }
+
+        debug('Creating Bluesky post record...', 'info');
+        const createRecordResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                repo: did,
+                collection: 'app.bsky.feed.post',
+                record: {
+                    text: content,
+                    createdAt: new Date().toISOString(),
+                    $type: 'app.bsky.feed.post'
+                }
+            })
+        });
+
+        const createRecordData = await createRecordResponse.json();
+        
+        if (createRecordData.error) {
+            debug(`Bluesky posting failed: ${createRecordData.error}`, 'error', createRecordData);
+            return false;
+        }
+
+        debug('Successfully posted to Bluesky', 'info');
+        return true;
+    } catch (error) {
+        debug(`Error posting to Bluesky: ${error.message}`, 'error');
+        return false;
+    }
 }
 
 async function postToSocialMedia(content) {
-    const mastodonResponse = await postToMastodon(content);
-    const blueskyResponse = await postToBluesky(content);
-    return { mastodonResponse, blueskyResponse };
+    try {
+        const results = await Promise.allSettled([
+            postToMastodon(content),
+            postToBluesky(content)
+        ]);
+
+        let success = false;
+        
+        // Check Mastodon result
+        if (results[0].status === 'fulfilled' && results[0].value) {
+            debug('Successfully posted to Mastodon', 'essential');
+            success = true;
+        } else {
+            const error = results[0].reason || 'Unknown error';
+            debug(`Failed to post to Mastodon: ${error}`, 'error');
+        }
+
+        // Check Bluesky result
+        if (results[1].status === 'fulfilled' && results[1].value) {
+            debug('Successfully posted to Bluesky', 'essential');
+            success = true;
+        } else {
+            const error = results[1].reason || 'Unknown error';
+            debug(`Failed to post to Bluesky: ${error}`, 'error');
+        }
+
+        if (!success) {
+            debug('Failed to post to any platform', 'error');
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        debug(`Error in postToSocialMedia: ${error.message}`, 'error');
+        return false;
+    }
 }
 
 // Main Execution
 async function main() {
     try {
-        debug('Starting bot execution', 'info');
+        debug('Bot started', 'essential');
+        
+        if (CONFIG.excludedWords.length > 0) {
+            debug(`Excluding words: ${CONFIG.excludedWords.join(', ')}`, 'info');
+        }
 
         // 30% chance to proceed with post generation
         const shouldProceed = Math.random() < 0.3;
         if (!shouldProceed) {
-            debug('Random check failed - skipping this run (70% probability)', 'info');
+            debug('Random check failed - skipping this run (70% probability)', 'essential');
             return;
         }
 
-        debug('Random check passed - proceeding with generation (30% probability)', 'info');
+        debug('Random check passed - proceeding with generation (30% probability)', 'essential');
         
         const fileContent = await fetchTextContent();
         debug(`Loaded ${fileContent.length} lines from text file`, 'info');
         
         const recentPosts = await fetchRecentPosts();
-        debug(`Fetched ${recentPosts.length} recent posts`, 'info');
+        debug(`Total posts retrieved: ${recentPosts.length}`, 'essential');
         
         const allContent = [...fileContent, ...recentPosts];
         debug(`Total content items for processing: ${allContent.length}`, 'info');
         
         const generatedPost = await generatePost(allContent);
         
-        if (CONFIG.debug) {
-            debug('Generated post:', 'info');
-            console.log('\n---Generated Post Start---');
-            console.log(generatedPost);
-            console.log('---Generated Post End---\n');
-        }
+        debug('Generated post:', 'essential');
+        debug('---Generated Post Start---', 'essential');
+        debug(generatedPost, 'essential');
+        debug('---Generated Post End---', 'essential');
         
         if (!CONFIG.debug) {
-            debug('Posting to social media platforms', 'info');
+            debug('Posting to social media platforms', 'essential');
             await postToSocialMedia(generatedPost);
-            debug('Successfully posted to all platforms', 'info');
+            debug('Successfully posted to all platforms', 'essential');
         } else {
             debug('Debug mode enabled - skipping actual posting', 'info');
         }
@@ -399,3 +517,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         process.exit(1);
     });
 }
+
+// Error handling for the main process
+process.on('unhandledRejection', (error) => {
+    debug(`Unhandled rejection: ${error.message}`, 'error');
+    process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+    debug(`Uncaught exception: ${error.message}`, 'error');
+    process.exit(1);
+});
