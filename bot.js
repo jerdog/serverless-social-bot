@@ -4,33 +4,38 @@ import fetch from 'node-fetch';
 import { promises as fs } from 'fs';
 
 // Configuration
-const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
-const DEBUG_LEVEL = process.env.DEBUG_LEVEL || 'info';
-
 const CONFIG = {
-    mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
+    debug: process.env.DEBUG_MODE === 'true',
+    debugLevel: process.env.DEBUG_LEVEL || 'info',
+    
+    // Markov Chain settings
+    markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
+    markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
+    markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
+    markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
+    
+    // Bluesky settings
     blueskyUsername: process.env.BLUESKY_USERNAME,
     blueskyPassword: process.env.BLUESKY_PASSWORD,
-    mastodonInstanceUrl: process.env.MASTODON_API_URL,
     blueskyApiUrl: process.env.BLUESKY_API_URL,
-    markovOptions: {
-        stateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-        maxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-        minChars: 100,
-        maxChars: 280
-    }
+    blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
+    
+    // Mastodon settings
+    mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
+    mastodonApiUrl: process.env.MASTODON_API_URL,
+    mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
 };
 
 // Utility Functions
 function debug(message, level = 'info', data = null) {
-    if (!DEBUG_MODE && level !== 'error') return;
-    if (DEBUG_LEVEL === 'info' && level === 'verbose') return;
+    if (!CONFIG.debug && level !== 'error') return;
+    if (CONFIG.debugLevel === 'info' && level === 'verbose') return;
 
     const timestamp = new Date().toISOString();
     const logLevel = level.toUpperCase();
     console.log(`[${timestamp}] [${logLevel}] ${message}`);
     
-    if (data && (DEBUG_LEVEL === 'verbose' || level === 'error')) {
+    if (data && (CONFIG.debugLevel === 'verbose' || level === 'error')) {
         console.log(data);
     }
 }
@@ -157,36 +162,114 @@ async function fetchTextContent() {
     return textData.split('\n').map(cleanText).filter(text => text.length > 0);
 }
 
+async function getBlueskyAuth() {
+    try {
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                identifier: CONFIG.blueskyUsername,
+                password: CONFIG.blueskyPassword
+            })
+        });
+
+        const data = await response.json();
+        if (data.error) {
+            debug('Bluesky authentication failed', 'error', data);
+            return null;
+        }
+
+        return data.accessJwt;
+    } catch (error) {
+        debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
+        return null;
+    }
+}
+
 async function fetchRecentPosts() {
-    const posts = [];
-    
     try {
-        // Fetch from Mastodon
-        const mastodonResponse = await fetch(`${CONFIG.mastodonInstanceUrl}/api/v1/timelines/home`, {
-            headers: {
-                'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+        const posts = [];
+        
+        // Log source accounts
+        debug('Fetching posts from Bluesky accounts:', 'info');
+        CONFIG.blueskySourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
+        
+        debug('Fetching posts from Mastodon accounts:', 'info');
+        CONFIG.mastodonSourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
+
+        try {
+            // Fetch from Mastodon
+            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/home`, {
+                headers: {
+                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+                }
+            });
+            const mastodonData = await mastodonResponse.json();
+            
+            if (Array.isArray(mastodonData)) {
+                debug(`Retrieved ${mastodonData.length} posts from Mastodon`, 'verbose');
+                const mastodonPosts = mastodonData
+                    .filter(post => post && post.content)
+                    .map(post => {
+                        const cleanedText = cleanText(post.content);
+                        debug(`Mastodon post: ${cleanedText}`, 'verbose');
+                        return cleanedText;
+                    })
+                    .filter(text => text.length > 0);
+                debug(`Processed ${mastodonPosts.length} valid Mastodon posts`, 'verbose');
+                posts.push(...mastodonPosts);
+            } else {
+                debug('Unexpected Mastodon API response format', 'error', mastodonData);
             }
-        });
-        const mastodonPosts = await mastodonResponse.json();
-        posts.push(...mastodonPosts.map(post => cleanText(post.content)));
-    } catch (error) {
-        debug(`Error fetching Mastodon posts: ${error.message}`, 'error');
-    }
-    
-    try {
-        // Fetch from Bluesky
-        const blueskyResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/app.bsky.feed.getTimeline`, {
-            headers: {
-                'Authorization': `Basic ${Buffer.from(`${CONFIG.blueskyUsername}:${CONFIG.blueskyPassword}`).toString('base64')}`
+        } catch (error) {
+            debug(`Error fetching Mastodon posts: ${error.message}`, 'error');
+        }
+        
+        try {
+            // Get Bluesky auth token
+            const blueskyToken = await getBlueskyAuth();
+            if (!blueskyToken) {
+                debug('Skipping Bluesky fetch due to authentication failure', 'error');
+            } else {
+                // Fetch from Bluesky
+                const blueskyResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/app.bsky.feed.getTimeline`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${blueskyToken}`
+                    }
+                });
+                const blueskyData = await blueskyResponse.json();
+                
+                if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
+                    debug(`Retrieved ${blueskyData.feed.length} posts from Bluesky`, 'verbose');
+                    const blueskyPosts = blueskyData.feed
+                        .filter(item => item && item.post && item.post.record && item.post.record.text)
+                        .map(item => {
+                            const cleanedText = cleanText(item.post.record.text);
+                            debug(`Bluesky post: ${cleanedText}`, 'verbose');
+                            return cleanedText;
+                        })
+                        .filter(text => text.length > 0);
+                    debug(`Processed ${blueskyPosts.length} valid Bluesky posts`, 'verbose');
+                    posts.push(...blueskyPosts);
+                } else {
+                    debug('Unexpected Bluesky API response format', 'error', blueskyData);
+                }
             }
-        });
-        const blueskyPosts = await blueskyResponse.json();
-        posts.push(...blueskyPosts.feed.map(post => cleanText(post.post.text)));
+        } catch (error) {
+            debug(`Error fetching Bluesky posts: ${error.message}`, 'error');
+        }
+        
+        const validPosts = posts.filter(text => text && text.length > 0);
+        debug(`Successfully fetched ${validPosts.length} total posts`, 'info');
+        return validPosts;
+        
     } catch (error) {
-        debug(`Error fetching Bluesky posts: ${error.message}`, 'error');
+        debug(`Error in fetchRecentPosts: ${error.message}`, 'error');
+        return [];
     }
-    
-    return posts.filter(text => text.length > 0);
 }
 
 // Post Generation
@@ -202,13 +285,13 @@ async function generatePost(contentArray) {
     debug(`Processing ${cleanContent.length} content items`, 'verbose');
 
     try {
-        const markov = new MarkovChain(CONFIG.markovOptions.stateSize);
+        const markov = new MarkovChain(CONFIG.markovStateSize);
         markov.addData(cleanContent);
 
         const options = {
-            maxTries: CONFIG.markovOptions.maxTries,
-            minChars: CONFIG.markovOptions.minChars,
-            maxChars: CONFIG.markovOptions.maxChars
+            maxTries: CONFIG.markovMaxTries,
+            minChars: CONFIG.markovMinChars,
+            maxChars: CONFIG.markovMaxChars
         };
 
         const result = markov.generate(options);
@@ -227,7 +310,7 @@ async function generatePost(contentArray) {
 
 // Social Media Integration
 async function postToMastodon(content) {
-    const response = await fetch(`${CONFIG.mastodonInstanceUrl}/api/v1/statuses`, {
+    const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
@@ -288,14 +371,14 @@ async function main() {
         
         const generatedPost = await generatePost(allContent);
         
-        if (DEBUG_MODE) {
+        if (CONFIG.debug) {
             debug('Generated post:', 'info');
             console.log('\n---Generated Post Start---');
             console.log(generatedPost);
             console.log('---Generated Post End---\n');
         }
         
-        if (!DEBUG_MODE) {
+        if (!CONFIG.debug) {
             debug('Posting to social media platforms', 'info');
             await postToSocialMedia(generatedPost);
             debug('Successfully posted to all platforms', 'info');

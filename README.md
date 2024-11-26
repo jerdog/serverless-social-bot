@@ -11,22 +11,29 @@ A Node.js-based serverless bot that generates and posts content to multiple soci
   - Maintains context and readability
 
 - **Multi-Platform Support**
-  - Mastodon integration
-  - Bluesky integration
+  - Mastodon integration with home timeline access
+  - Bluesky integration with proper session-based auth
   - Parallel posting capabilities
   - Platform-specific API handling
 
 - **Content Processing**
   - Removes URLs and @mentions
   - Preserves hashtags
+  - Converts HTML entities to actual characters (e.g., &amp; → &)
   - Filters empty or invalid content
   - Maintains natural text flow
+
+- **Smart Posting**
+  - 30% random chance of posting on each run
+  - Prevents timeline flooding
+  - Creates natural posting patterns
 
 - **Debug System**
   - Configurable debug levels (info/verbose)
   - Detailed logging with timestamps
   - Generation attempt tracking
   - API response monitoring
+  - Per-platform post processing stats
 
 ## Requirements
 
@@ -54,10 +61,12 @@ A Node.js-based serverless bot that generates and posts content to multiple soci
    BLUESKY_USERNAME="your.username.bsky.social"
    BLUESKY_PASSWORD="your-password"
    BLUESKY_API_URL="https://bsky.social"
+   BLUESKY_SOURCE_ACCOUNTS=["@user1.bsky.social","@user2.bsky.social"]
 
    # Mastodon Credentials
    MASTODON_ACCESS_TOKEN="your-access-token"
    MASTODON_API_URL="https://your-instance.social"
+   MASTODON_SOURCE_ACCOUNTS=["@user1@instance.social","@user2@instance.social"]
 
    # Markov Chain Configuration
    MARKOV_STATE_SIZE=2
@@ -126,12 +135,26 @@ The Markov chain generator can be fine-tuned using these parameters:
   - 'info': Basic operation logging
   - 'verbose': Detailed generation attempts and API responses
 
+### Platform Settings
+
+#### Bluesky
+- `BLUESKY_USERNAME`: Your Bluesky handle (e.g., "username.bsky.social")
+- `BLUESKY_PASSWORD`: Your Bluesky app password
+- `BLUESKY_API_URL`: Bluesky API endpoint (usually "https://bsky.social")
+- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from
+
+#### Mastodon
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon API access token
+- `MASTODON_API_URL`: Your Mastodon instance URL
+- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from
+
 ## Security
 
 - Store credentials in `.env` file (not in version control)
 - Use environment variables for sensitive data
 - Implement API rate limiting
 - Follow platform-specific security guidelines
+- Use app-specific passwords when available
 
 ## Contributing
 
