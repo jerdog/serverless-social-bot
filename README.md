@@ -84,19 +84,47 @@ A Node.js-based serverless bot that generates and posts content to multiple soci
    DEBUG_MODE=false node bot.js
    ```
 
+Note: The bot has a 30% chance of generating and posting content each time it runs. This randomness helps create a more natural posting pattern and prevents overwhelming your social media feeds. When the script runs but doesn't post, it will log a message indicating the random check failed.
+
 ## Configuration
 
 ### Markov Chain Settings
 
-- `MARKOV_STATE_SIZE`: Number of words to use for state (default: 2)
-- `MARKOV_MAX_TRIES`: Maximum generation attempts (default: 100)
-- `MARKOV_MIN_CHARS`: Minimum characters per post (default: 100)
-- `MARKOV_MAX_CHARS`: Maximum characters per post (default: 280)
+The Markov chain generator can be fine-tuned using these parameters:
+
+- `MARKOV_STATE_SIZE`: Controls how many words the generator looks at to determine the next word. 
+  - Default: 2 (looks at pairs of words)
+  - Higher values (3+) create more coherent but less creative text
+  - Lower values (1) create more random, less coherent text
+  - Example: With state size 2, in "the quick brown fox", to predict the next word after "brown", it looks at "quick brown"
+
+- `MARKOV_MAX_TRIES`: Maximum number of attempts to generate a valid post.
+  - Default: 100
+  - Higher values give better chances of meeting length requirements
+  - Lower values make the generation process faster but might fail more often
+  - The generator will stop either when it creates a valid post or hits this limit
+
+- `MARKOV_MIN_CHARS`: Minimum number of characters for a generated post.
+  - Default: 100
+  - Ensures posts have sufficient content
+  - Posts shorter than this will be rejected and the generator will try again
+  - Should be set based on your content style and platform requirements
+
+- `MARKOV_MAX_CHARS`: Maximum number of characters for a generated post.
+  - Default: 280 (Twitter/X/Bluesky limit)
+  - Ensures posts fit platform constraints
+  - Generator will stop adding words when approaching this limit
+  - Should match the lowest character limit of your target platforms
 
 ### Debug Settings
 
 - `DEBUG_MODE`: Enable/disable debug output (true/false)
-- `DEBUG_LEVEL`: Logging detail level ('info'/'verbose')
+  - When true: Shows generation process and skips posting
+  - When false: Posts to social media platforms
+
+- `DEBUG_LEVEL`: Logging detail level
+  - 'info': Basic operation logging
+  - 'verbose': Detailed generation attempts and API responses
 
 ## Security
 

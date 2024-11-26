@@ -35,8 +35,29 @@ function debug(message, level = 'info', data = null) {
     }
 }
 
+function decodeHtmlEntities(text) {
+    const entities = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&apos;': "'",
+        '&#x2F;': '/',
+        '&#x2f;': '/',
+        '&#x5C;': '\\',
+        '&#x5c;': '\\',
+        '&nbsp;': ' '
+    };
+    
+    return text.replace(/&[#\w]+;/g, entity => entities[entity] || entity);
+}
+
 function cleanText(text) {
     if (!text || typeof text !== 'string') return '';
+
+    // First decode HTML entities
+    text = decodeHtmlEntities(text);
 
     return text
         // Remove URLs
@@ -246,6 +267,15 @@ async function postToSocialMedia(content) {
 async function main() {
     try {
         debug('Starting bot execution', 'info');
+
+        // 30% chance to proceed with post generation
+        const shouldProceed = Math.random() < 0.3;
+        if (!shouldProceed) {
+            debug('Random check failed - skipping this run (70% probability)', 'info');
+            return;
+        }
+
+        debug('Random check passed - proceeding with generation (30% probability)', 'info');
         
         const fileContent = await fetchTextContent();
         debug(`Loaded ${fileContent.length} lines from text file`, 'info');
