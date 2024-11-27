@@ -35,72 +35,71 @@ export default {
             process.env.CLOUDFLARE_WORKER = 'true';
             Object.assign(process.env, env);
 
-            // Log environment state
-            debug('Environment variables in fetch:', 'verbose', {
-                CLOUDFLARE_WORKER: process.env.CLOUDFLARE_WORKER,
-                DEBUG_MODE: process.env.DEBUG_MODE,
-                DEBUG_LEVEL: process.env.DEBUG_LEVEL
-            });
-
-            // Development routes for testing
-            if (env.DEBUG_MODE === 'true' && request.method === 'POST') {
-                const url = new URL(request.url);
-                
-                // Test specific functionality
-                switch (url.pathname) {
-                    case '/test/replies':
-                        debug('Testing reply functionality...', 'info');
-                        await main({ type: 'test', action: 'checkReplies' });
-                        return new Response('Reply check completed', { status: 200 });
-                    
-                    case '/test/post':
-                        debug('Testing post generation...', 'info');
-                        await main({ type: 'test', action: 'generatePost' });
-                        return new Response('Post generation completed', { status: 200 });
-
-                    case '/test/simulate/reply':
-                        debug('Simulating incoming replies...', 'info');
-                        await main({ 
-                            type: 'test', 
-                            action: 'simulateReplies',
-                            mockData: mockReplies 
-                        });
-                        return new Response('Reply simulation completed', { status: 200 });
-
-                    case '/test/simulate/interaction':
-                        try {
-                            const body = await request.json();
-                            const mockInteraction = {
-                                platform: body.platform || 'mastodon',
-                                content: body.content || 'Test interaction message',
-                                author: body.author || 'tester@social.network',
-                                replyTo: body.replyTo || 'original-post-id'
-                            };
-                            
-                            debug('Simulating custom interaction...', 'info', mockInteraction);
-                            await main({
-                                type: 'test',
-                                action: 'simulateInteraction',
-                                mockData: mockInteraction
-                            });
-                            return new Response('Custom interaction simulation completed', { status: 200 });
-                        } catch (error) {
-                            return new Response('Invalid simulation request: ' + error.message, { status: 400 });
-                        }
-                    
-                    default:
-                        // Regular execution
-                        await main();
-                        return new Response('Execution completed', { status: 200 });
-                }
+            const url = new URL(request.url);
+            
+            // Handle GET requests
+            if (request.method === 'GET') {
+                return new Response('Serverless Social Bot is running! 🤖', {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/plain'
+                    }
+                });
             }
-
-            // Production scheduled execution
+            
+            // Handle POST requests
             if (request.method === 'POST') {
+                // Development routes for testing
+                if (env.DEBUG_MODE === 'true') {
+                    switch (url.pathname) {
+                        case '/test/replies':
+                            debug('Testing reply functionality...', 'info');
+                            await main({ type: 'test', action: 'checkReplies' });
+                            return new Response('Reply check completed', { status: 200 });
+                        
+                        case '/test/post':
+                            debug('Testing post generation...', 'info');
+                            await main({ type: 'test', action: 'generatePost' });
+                            return new Response('Post generation completed', { status: 200 });
+
+                        case '/test/simulate/reply':
+                            debug('Simulating incoming replies...', 'info');
+                            await main({ 
+                                type: 'test', 
+                                action: 'simulateReplies',
+                                mockData: mockReplies 
+                            });
+                            return new Response('Reply simulation completed', { status: 200 });
+
+                        case '/test/simulate/interaction':
+                            try {
+                                const body = await request.json();
+                                const mockInteraction = {
+                                    platform: body.platform || 'mastodon',
+                                    content: body.content || 'Test interaction message',
+                                    author: body.author || 'tester@social.network',
+                                    replyTo: body.replyTo || 'original-post-id'
+                                };
+                                
+                                debug('Simulating custom interaction...', 'info', mockInteraction);
+                                await main({
+                                    type: 'test',
+                                    action: 'simulateInteraction',
+                                    mockData: mockInteraction
+                                });
+                                return new Response('Custom interaction simulation completed', { status: 200 });
+                            } catch (error) {
+                                return new Response('Invalid simulation request: ' + error.message, { status: 400 });
+                            }
+                    }
+                }
+
+                // Regular execution
                 await main();
                 return new Response('Execution completed', { status: 200 });
             }
 
+            // Handle unsupported methods
             return new Response('Method not allowed', { status: 405 });
         } catch (error) {
             console.error('Error executing bot:', error);
@@ -111,11 +110,9 @@ export default {
     // Handle scheduled events
     async scheduled(event, env, ctx) {
         try {
-            // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
             Object.assign(process.env, env);
 
-            // Log environment state
             debug('Environment variables in scheduled:', 'verbose', {
                 CLOUDFLARE_WORKER: process.env.CLOUDFLARE_WORKER,
                 DEBUG_MODE: process.env.DEBUG_MODE,
