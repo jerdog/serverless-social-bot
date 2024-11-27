@@ -1,23 +1,29 @@
 name = "serverless-social-bot"
 main = "worker.js"
-compatibility_date = "2024-09-23"
+compatibility_date = "2023-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["0 */2 * * *"]  # Run every 2 hours
+# Run reply checks every 15 minutes, new posts every 2 hours
+crons = ["*/15 * * * *", "0 */2 * * *"]
 
 [build]
 command = "npm install"
 
 [vars]
-DEBUG_MODE = "true"
-DEBUG_LEVEL = "verbose"
-MARKOV_STATE_SIZE = "2"
-MARKOV_MAX_TRIES = "100"
-MARKOV_MIN_CHARS = "100"
-MARKOV_MAX_CHARS = "280"
+# API Endpoints
 BLUESKY_API_URL = "https://bsky.social"  # No trailing slash
-MASTODON_API_URL = "https://hachyderm.io"  # No trailing slash
+MASTODON_API_URL = "https://mastodon.social"  # No trailing slash
+
+# Markov Chain Settings
+MARKOV_STATE_SIZE = 2
+MARKOV_MAX_TRIES = 100
+MARKOV_MIN_CHARS = 100
+MARKOV_MAX_CHARS = 280
+
+# Debug Settings
+DEBUG_MODE = false
+DEBUG_LEVEL = "info"
 
 [env.dev]
 vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }

@@ -220,9 +220,10 @@ class MarkovChain {
         this.stateSize = stateSize;
         this.chain = new Map();
         this.startStates = [];
+        this.contextChain = new Map(); // For contextual responses
     }
 
-    addData(texts) {
+    addData(texts, context = null) {
         for (const text of texts) {
             if (typeof text !== 'string' || !text.trim()) continue;
             
@@ -232,6 +233,7 @@ class MarkovChain {
             const startState = words.slice(0, this.stateSize).join(' ');
             this.startStates.push(startState);
 
+            // Build regular chain
             for (let i = 0; i <= words.length - this.stateSize; i++) {
                 const state = words.slice(i, i + this.stateSize).join(' ');
                 const nextWord = words[i + this.stateSize] || null;
@@ -243,6 +245,19 @@ class MarkovChain {
                     this.chain.get(state).push(nextWord);
                 }
             }
+
+            // Build context chain if context is provided
+            if (context) {
+                const contextKey = context.toLowerCase();
+                if (!this.contextChain.has(contextKey)) {
+                    this.contextChain.set(contextKey, new Set());
+                }
+                // Store word pairs that might be relevant to this context
+                const contextSet = this.contextChain.get(contextKey);
+                for (let i = 0; i < words.length - 1; i++) {
+                    contextSet.add(words[i] + ' ' + words[i + 1]);
+                }
+            }
         }
     }
 
@@ -250,17 +265,41 @@ class MarkovChain {
         const {
             maxTries = 100,
             minChars = 100,
-            maxChars = 280
+            maxChars = 280,
+            context = null
         } = options;
 
         for (let attempt = 0; attempt < maxTries; attempt++) {
             try {
-                const startIdx = Math.floor(Math.random() * this.startStates.length);
-                let currentState = this.startStates[startIdx];
+                let startState;
+                
+                // If we have context, try to start with a relevant word pair
+                if (context) {
+                    const contextKey = context.toLowerCase();
+                    const contextPairs = this.contextChain.get(contextKey);
+                    if (contextPairs && contextPairs.size > 0) {
+                        // Convert Set to Array for random selection
+                        const pairs = Array.from(contextPairs);
+                        const randomPair = pairs[Math.floor(Math.random() * pairs.length)];
+                        // Find a start state that contains this pair
+                        const relevantStarts = this.startStates.filter(state => 
+                            state.toLowerCase().includes(randomPair));
+                        if (relevantStarts.length > 0) {
+                            startState = relevantStarts[Math.floor(Math.random() * relevantStarts.length)];
+                        }
+                    }
+                }
+
+                // Fall back to random start state if no context match
+                if (!startState) {
+                    const startIdx = Math.floor(Math.random() * this.startStates.length);
+                    startState = this.startStates[startIdx];
+                }
+
+                let currentState = startState;
                 let result = currentState.split(/\s+/);
                 let currentLength = currentState.length;
 
-                // Generate text until we hit maxChars or can't generate more
                 while (currentLength < maxChars) {
                     const nextWords = this.chain.get(currentState);
                     if (!nextWords || nextWords.length === 0) break;
@@ -268,8 +307,7 @@ class MarkovChain {
                     const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
                     if (!nextWord) break;
 
-                    // Check if adding the next word would exceed maxChars
-                    const newLength = currentLength + 1 + nextWord.length; // +1 for space
+                    const newLength = currentLength + 1 + nextWord.length;
                     if (newLength > maxChars) break;
 
                     result.push(nextWord);
@@ -279,7 +317,6 @@ class MarkovChain {
                 }
 
                 const generatedText = result.join(' ');
-                // Check if the generated text meets our length criteria
                 if (generatedText.length >= minChars && generatedText.length <= maxChars) {
                     debug(`Generated text length: ${generatedText.length} characters`, 'verbose');
                     return { string: generatedText };
@@ -466,6 +503,117 @@ async function getBlueskyDid() {
     }
 }
 
+// Fetch and process replies
+async function fetchReplies() {
+    const replies = {
+        mastodon: [],
+        bluesky: []
+    };
+
+    try {
+        // Fetch Mastodon replies
+        if (CONFIG.mastodonAccessToken) {
+            const mastodonResponse = await fetch(
+                `${CONFIG.mastodonApiUrl}/api/v1/notifications?types[]=mention`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+                    }
+                }
+            );
+            
+            if (mastodonResponse.ok) {
+                const notifications = await mastodonResponse.json();
+                for (const notification of notifications) {
+                    if (notification.type === 'mention') {
+                        replies.mastodon.push({
+                            id: notification.status.id,
+                            content: cleanText(notification.status.content),
+                            account: notification.account.acct,
+                            inReplyToId: notification.status.in_reply_to_id
+                        });
+                    }
+                }
+            }
+        }
+
+        // Fetch Bluesky replies
+        if (CONFIG.blueskyUsername && CONFIG.blueskyPassword) {
+            const auth = await getBlueskyAuth();
+            const did = await getBlueskyDid();
+            
+            const notificationsResponse = await fetch(
+                `${CONFIG.blueskyApiUrl}/xrpc/app.bsky.notification.listNotifications`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${auth.accessJwt}`
+                    }
+                }
+            );
+
+            if (notificationsResponse.ok) {
+                const notifications = await notificationsResponse.json();
+                for (const notification of notifications.notifications) {
+                    if (notification.reason === 'reply' && notification.record?.text) {
+                        replies.bluesky.push({
+                            id: notification.cid,
+                            content: cleanText(notification.record.text),
+                            author: notification.author.handle,
+                            uri: notification.uri,
+                            replyTo: notification.record.reply?.parent.uri
+                        });
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        debug(`Error fetching replies: ${error.message}`, 'error');
+    }
+
+    return replies;
+}
+
+// Generate and post replies
+async function handleReplies(markovChain) {
+    try {
+        const replies = await fetchReplies();
+        
+        // Handle Mastodon replies
+        for (const reply of replies.mastodon) {
+            try {
+                const response = markovChain.generate({
+                    minChars: 10,
+                    maxChars: 280,
+                    context: reply.content
+                });
+
+                await postToMastodon(response.string, reply.id);
+                debug(`Posted Mastodon reply to ${reply.account}`, 'info');
+            } catch (error) {
+                debug(`Error posting Mastodon reply: ${error.message}`, 'error');
+            }
+        }
+
+        // Handle Bluesky replies
+        for (const reply of replies.bluesky) {
+            try {
+                const response = markovChain.generate({
+                    minChars: 10,
+                    maxChars: 280,
+                    context: reply.content
+                });
+
+                await postToBluesky(response.string, reply.replyTo);
+                debug(`Posted Bluesky reply to ${reply.author}`, 'info');
+            } catch (error) {
+                debug(`Error posting Bluesky reply: ${error.message}`, 'error');
+            }
+        }
+    } catch (error) {
+        debug(`Error handling replies: ${error.message}`, 'error');
+    }
+}
+
 // Post Generation
 async function generatePost(contentArray) {
     if (!contentArray || contentArray.length === 0) {
@@ -503,64 +651,71 @@ async function generatePost(contentArray) {
 }
 
 // Social Media Integration
-async function postToMastodon(content) {
-    const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ status: content })
-    });
-    return await response.json();
-}
-
-async function postToBluesky(content) {
+async function postToMastodon(content, replyToId = null) {
     try {
-        // Get auth token
-        const token = await getBlueskyAuth();
-        if (!token) {
-            debug('Failed to authenticate with Bluesky', 'error');
-            return false;
-        }
-
-        // Get DID
-        const did = await getBlueskyDid();
-        if (!did) {
-            debug('Failed to resolve Bluesky DID', 'error');
-            return false;
-        }
-
-        debug('Creating Bluesky post record...', 'info');
-        const createRecordResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
+        const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`,
+                'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                repo: did,
-                collection: 'app.bsky.feed.post',
-                record: {
-                    text: content,
-                    createdAt: new Date().toISOString(),
-                    $type: 'app.bsky.feed.post'
-                }
+                status: content,
+                ...(replyToId ? { in_reply_to_id: replyToId } : {})
             })
         });
 
-        const createRecordData = await createRecordResponse.json();
-        
-        if (createRecordData.error) {
-            debug(`Bluesky posting failed: ${createRecordData.error}`, 'error', createRecordData);
-            return false;
+        if (!response.ok) {
+            throw new Error(`Mastodon API error: ${response.status}`);
         }
 
-        debug('Successfully posted to Bluesky', 'info');
-        return true;
+        const data = await response.json();
+        debug(`Posted to Mastodon: ${data.url}`, 'info');
+        return data;
+    } catch (error) {
+        debug(`Error posting to Mastodon: ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+async function postToBluesky(content, replyTo = null) {
+    try {
+        const auth = await getBlueskyAuth();
+        
+        const post = {
+            text: content,
+            createdAt: new Date().toISOString(),
+            ...(replyTo ? {
+                reply: {
+                    parent: { uri: replyTo },
+                    root: { uri: replyTo }
+                }
+            } : {})
+        };
+
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${auth.accessJwt}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                repo: auth.did,
+                collection: 'app.bsky.feed.post',
+                record: post
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Bluesky API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        debug(`Posted to Bluesky: ${data.uri}`, 'info');
+        return data;
     } catch (error) {
         debug(`Error posting to Bluesky: ${error.message}`, 'error');
-        return false;
+        throw error;
     }
 }
 
@@ -604,42 +759,33 @@ async function postToSocialMedia(content) {
 }
 
 // Main Execution
-async function main() {
+async function main(event = {}) {
     try {
-        // Load configuration
         CONFIG = await loadConfig();
+        const contentArray = await fetchTextContent();
         
-        debug('Bot started', 'essential');
+        // Initialize Markov chain with existing content
+        const markovChain = new MarkovChain(CONFIG.markovStateSize);
+        markovChain.addData(contentArray);
+
+        // Get the current minute to determine which cron triggered this
+        const currentMinute = new Date().getMinutes();
+        const isHourlyCheck = currentMinute % 15 === 0;
+        const isTwoHourCheck = currentMinute === 0 && new Date().getHours() % 2 === 0;
+
+        // Always check for and handle replies
+        await handleReplies(markovChain);
         
-        if (CONFIG.excludedWords.length > 0) {
-            debug(`Excluding words: ${CONFIG.excludedWords.join(', ')}`, 'info');
+        // Only generate new posts on the two-hour schedule
+        if (isTwoHourCheck && Math.random() < 0.3) {
+            debug('Two-hour check: Attempting to generate new post', 'info');
+            const post = await generatePost(contentArray);
+            await postToSocialMedia(post);
+        } else if (isTwoHourCheck) {
+            debug('Two-hour check: Skipping post generation this time', 'info');
+        } else {
+            debug('15-minute check: Checked for replies only', 'info');
         }
-
-        // 30% chance to proceed with post generation
-        const shouldProceed = Math.random() < 0.3;
-        if (!shouldProceed) {
-            debug('Random check failed - skipping this run (70% probability)', 'essential');
-            return;
-        }
-
-        debug('Random check passed - proceeding with generation (30% probability)', 'essential');
-        
-        // Get source content
-        const sourceContent = await fetchTextContent();
-        if (!sourceContent || sourceContent.length === 0) {
-            debug('No source content available', 'error');
-            return;
-        }
-
-        // Generate post
-        const post = await generatePost(sourceContent);
-        if (!post) {
-            debug('Failed to generate valid post', 'error');
-            return;
-        }
-
-        // Post to social media
-        await postToSocialMedia(post);
     } catch (error) {
         debug(`Error in main execution: ${error.message}`, 'error');
         throw error;
