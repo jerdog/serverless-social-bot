@@ -1,5 +1,4 @@
-// Essential imports only
-import fetch from 'node-fetch';
+// No imports needed - fetch is built into Cloudflare Workers
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -66,75 +65,35 @@ function debug(message, level = 'info', data = null) {
 }
 
 // Configuration loader
-function loadConfig() {
+async function loadConfig() {
     try {
-        debug('Loading configuration...', 'verbose');
-
-        // Load configuration from environment variables
         const config = {
-            debug: process.env.DEBUG_MODE === 'true',
-            debugLevel: process.env.DEBUG_LEVEL || 'info',
+            DEBUG_MODE: process.env.DEBUG_MODE || 'false',
+            DEBUG_LEVEL: process.env.DEBUG_LEVEL || 'info',
             
-            // Markov Chain settings
-            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
+            // API URLs
+            MASTODON_API_URL: process.env.MASTODON_API_URL || 'https://mastodon.social',
+            BLUESKY_API_URL: process.env.BLUESKY_API_URL || 'https://bsky.social',
             
-            // Content filtering
-            excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
+            // Credentials
+            MASTODON_ACCESS_TOKEN: process.env.MASTODON_ACCESS_TOKEN,
+            BLUESKY_USERNAME: process.env.BLUESKY_USERNAME,
+            BLUESKY_PASSWORD: process.env.BLUESKY_PASSWORD,
             
-            // Bluesky settings
-            blueskyUsername: process.env.BLUESKY_USERNAME,
-            blueskyPassword: process.env.BLUESKY_PASSWORD,
-            blueskyApiUrl: process.env.BLUESKY_API_URL ? process.env.BLUESKY_API_URL.replace(/\/$/, '') : undefined,
-            blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-            
-            // Mastodon settings
-            mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-            mastodonApiUrl: process.env.MASTODON_API_URL ? process.env.MASTODON_API_URL.replace(/\/$/, '') : undefined,
-            mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+            // Bot Configuration
+            POST_MIN_LENGTH: parseInt(process.env.POST_MIN_LENGTH || '10', 10),
+            POST_MAX_LENGTH: parseInt(process.env.POST_MAX_LENGTH || '280', 10),
+            MARKOV_STATE_SIZE: parseInt(process.env.MARKOV_STATE_SIZE || '2', 10),
+            MAX_GENERATION_ATTEMPTS: parseInt(process.env.MAX_GENERATION_ATTEMPTS || '100', 10)
         };
 
-        // Log loaded configuration (excluding sensitive data)
-        debug('Loaded configuration:', 'verbose', {
-            debug: config.debug,
-            debugLevel: config.debugLevel,
-            markovSettings: {
-                stateSize: config.markovStateSize,
-                maxTries: config.markovMaxTries,
-                minChars: config.markovMinChars,
-                maxChars: config.markovMaxChars
-            },
-            blueskyUsername: config.blueskyUsername,
-            blueskyApiUrl: config.blueskyApiUrl,
-            mastodonApiUrl: config.mastodonApiUrl
-        });
-
-        // Validate required configuration
-        const requiredVars = [
-            ['BLUESKY_USERNAME', config.blueskyUsername],
-            ['BLUESKY_PASSWORD', config.blueskyPassword],
-            ['BLUESKY_API_URL', config.blueskyApiUrl],
-            ['MASTODON_ACCESS_TOKEN', config.mastodonAccessToken],
-            ['MASTODON_API_URL', config.mastodonApiUrl]
-        ];
-
-        const missingVars = requiredVars
-            .filter(([name, value]) => !value)
-            .map(([name]) => name);
-
-        if (missingVars.length > 0) {
-            throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
-        }
-
-        // Validate Bluesky username
-        if (!validateBlueskyUsername(config.blueskyUsername)) {
-            const errorMsg = `Invalid Bluesky username format: "${config.blueskyUsername}". ` +
-                'Username should be in the format "handle.bsky.social" or "handle.domain.tld". ' +
-                'Make sure to include the full domain and check for typos.';
-            debug(errorMsg, 'error');
-            throw new Error(errorMsg);
+        // Log configuration in debug mode
+        if (config.DEBUG_MODE === 'true') {
+            debug('Configuration loaded:', 'verbose', {
+                ...config,
+                MASTODON_ACCESS_TOKEN: config.MASTODON_ACCESS_TOKEN ? '[REDACTED]' : undefined,
+                BLUESKY_PASSWORD: config.BLUESKY_PASSWORD ? '[REDACTED]' : undefined
+            });
         }
 
         return config;
@@ -331,219 +290,61 @@ class MarkovChain {
     }
 }
 
+// Mock content for development
+const mockContent = [
+    "Artificial Intelligence is transforming how we interact with technology.",
+    "Machine learning models are becoming increasingly sophisticated.",
+    "The future of computing lies in quantum technologies and AI.",
+    "Data science and analytics drive modern decision making.",
+    "Cloud computing enables scalable and efficient solutions.",
+    "Edge computing brings processing closer to data sources.",
+    "Neural networks excel at pattern recognition tasks.",
+    "Blockchain technology ensures transparent transactions.",
+    "Cybersecurity is crucial in our connected world.",
+    "The Internet of Things connects our daily devices."
+];
+
 // Content Management
 async function fetchTextContent() {
-    // In worker environment, we'll fetch content from the APIs directly
-    const posts = await fetchRecentPosts();
-    return posts.map(cleanText).filter(text => text.length > 0);
-}
-
-async function fetchRecentPosts() {
     try {
-        const posts = [];
-        
-        // Log source accounts
-        debug('Fetching posts from Bluesky accounts:', 'info');
-        CONFIG.blueskySourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
-        
-        debug('Fetching posts from Mastodon accounts:', 'info');
-        CONFIG.mastodonSourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
-
-        try {
-            // Fetch from Mastodon
-            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/public`, {
-                headers: {
-                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
-                    'Accept': 'application/json'
-                }
-            });
-            
-            if (!mastodonResponse.ok) {
-                const errorData = await mastodonResponse.json();
-                debug('Mastodon API error', 'error', errorData);
-                throw new Error(`Mastodon API error: ${errorData.error || 'Unknown error'}`);
-            }
-            
-            const mastodonData = await mastodonResponse.json();
-            
-            if (Array.isArray(mastodonData)) {
-                debug(`Retrieved ${mastodonData.length} posts from Mastodon`, 'verbose');
-                const mastodonPosts = mastodonData
-                    .filter(post => post && post.content)
-                    .map(post => {
-                        const cleanedText = cleanText(post.content);
-                        debug(`Mastodon post: ${cleanedText}`, 'verbose');
-                        return cleanedText;
-                    })
-                    .filter(text => text.length > 0);
-                debug(`Processed ${mastodonPosts.length} valid Mastodon posts`, 'verbose');
-                posts.push(...mastodonPosts);
-            } else {
-                debug('Unexpected Mastodon API response format', 'error', mastodonData);
-            }
-        } catch (error) {
-            debug(`Error fetching Mastodon posts: ${error.message}`, 'error');
-        }
-        
-        try {
-            // Get Bluesky auth token
-            const blueskyToken = await getBlueskyAuth();
-            if (!blueskyToken) {
-                debug('Skipping Bluesky fetch due to authentication failure', 'error');
-            } else {
-                // Fetch from Bluesky
-                const blueskyResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/app.bsky.feed.getTimeline`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${blueskyToken}`
-                    }
-                });
-                const blueskyData = await blueskyResponse.json();
-                
-                if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
-                    debug(`Retrieved ${blueskyData.feed.length} posts from Bluesky`, 'verbose');
-                    const blueskyPosts = blueskyData.feed
-                        .filter(item => item && item.post && item.post.record && item.post.record.text)
-                        .map(item => {
-                            const cleanedText = cleanText(item.post.record.text);
-                            debug(`Bluesky post: ${cleanedText}`, 'verbose');
-                            return cleanedText;
-                        })
-                        .filter(text => text.length > 0);
-                    debug(`Processed ${blueskyPosts.length} valid Bluesky posts`, 'verbose');
-                    posts.push(...blueskyPosts);
-                } else {
-                    debug('Unexpected Bluesky API response format', 'error', blueskyData);
-                }
-            }
-        } catch (error) {
-            debug(`Error fetching Bluesky posts: ${error.message}`, 'error');
-        }
-        
-        const validPosts = posts.filter(text => text && text.length > 0);
-        debug(`Successfully fetched ${validPosts.length} total posts`, 'info');
-        return validPosts;
-        
-    } catch (error) {
-        debug(`Error in fetchRecentPosts: ${error.message}`, 'error');
-        return [];
-    }
-}
-
-async function getBlueskyAuth() {
-    try {
-        debug('Authenticating with Bluesky...', 'verbose');
-        debug(`Using Bluesky username: ${CONFIG.blueskyUsername}`, 'verbose');
-        
-        // Validate credentials
-        if (!CONFIG.blueskyUsername || !CONFIG.blueskyPassword) {
-            throw new Error('Missing Bluesky credentials');
-        }
-        
-        if (!validateBlueskyUsername(CONFIG.blueskyUsername)) {
-            throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
+        if (CONFIG.DEBUG_MODE === 'true') {
+            debug('Using mock content in development mode', 'info');
+            return mockContent;
         }
 
-        const authData = {
-            "identifier": CONFIG.blueskyUsername,
-            "password": CONFIG.blueskyPassword
+        const replies = {
+            mastodon: [],
+            bluesky: []
         };
 
-        debug('Sending Bluesky auth request...', 'verbose', authData);
-
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify(authData)
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            debug('Bluesky authentication failed', 'error', errorData);
-            throw new Error(`Bluesky authentication error: ${errorData.message || 'Unknown error'}`);
-        }
-
-        const data = await response.json();
-        if (!data || !data.accessJwt) {
-            debug('Bluesky authentication response missing access token', 'error', data);
-            return null;
-        }
-
-        debug('Successfully authenticated with Bluesky', 'verbose');
-        return data.accessJwt;
-    } catch (error) {
-        debug(`Bluesky authentication error: ${error.message}`, 'error');
-        return null;
-    }
-}
-
-async function getBlueskyDid() {
-    try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
-            return null;
-        }
-
-        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
-        return data.did;
-    } catch (error) {
-        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
-        return null;
-    }
-}
-
-// Fetch and process replies
-async function fetchReplies() {
-    const replies = {
-        mastodon: [],
-        bluesky: []
-    };
-
-    try {
-        // Fetch Mastodon replies
-        if (CONFIG.mastodonAccessToken) {
+        // Fetch Mastodon content
+        if (CONFIG.MASTODON_ACCESS_TOKEN) {
             const mastodonResponse = await fetch(
-                `${CONFIG.mastodonApiUrl}/api/v1/notifications?types[]=mention`,
+                `${CONFIG.MASTODON_API_URL}/api/v1/timelines/home`,
                 {
                     headers: {
-                        'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+                        'Authorization': `Bearer ${CONFIG.MASTODON_ACCESS_TOKEN}`
                     }
                 }
             );
             
             if (mastodonResponse.ok) {
-                const notifications = await mastodonResponse.json();
-                for (const notification of notifications) {
-                    if (notification.type === 'mention') {
-                        replies.mastodon.push({
-                            id: notification.status.id,
-                            content: cleanText(notification.status.content),
-                            account: notification.account.acct,
-                            inReplyToId: notification.status.in_reply_to_id
-                        });
+                const posts = await mastodonResponse.json();
+                for (const post of posts) {
+                    if (post.content) {
+                        replies.mastodon.push(cleanText(post.content));
                     }
                 }
             }
         }
 
-        // Fetch Bluesky replies
-        if (CONFIG.blueskyUsername && CONFIG.blueskyPassword) {
+        // Fetch Bluesky content
+        if (CONFIG.BLUESKY_USERNAME && CONFIG.BLUESKY_PASSWORD) {
             const auth = await getBlueskyAuth();
             const did = await getBlueskyDid();
             
-            const notificationsResponse = await fetch(
-                `${CONFIG.blueskyApiUrl}/xrpc/app.bsky.notification.listNotifications`,
+            const feedResponse = await fetch(
+                `${CONFIG.BLUESKY_API_URL}/xrpc/app.bsky.feed.getTimeline`,
                 {
                     headers: {
                         'Authorization': `Bearer ${auth.accessJwt}`
@@ -551,26 +352,126 @@ async function fetchReplies() {
                 }
             );
 
-            if (notificationsResponse.ok) {
-                const notifications = await notificationsResponse.json();
-                for (const notification of notifications.notifications) {
-                    if (notification.reason === 'reply' && notification.record?.text) {
-                        replies.bluesky.push({
-                            id: notification.cid,
-                            content: cleanText(notification.record.text),
-                            author: notification.author.handle,
-                            uri: notification.uri,
-                            replyTo: notification.record.reply?.parent.uri
-                        });
+            if (feedResponse.ok) {
+                const feed = await feedResponse.json();
+                for (const post of feed.feed) {
+                    if (post.post?.record?.text) {
+                        replies.bluesky.push(cleanText(post.post.record.text));
                     }
                 }
             }
         }
+
+        // Combine and return all content
+        return [
+            ...replies.mastodon,
+            ...replies.bluesky
+        ];
+    } catch (error) {
+        debug(`Error fetching content: ${error.message}`, 'error');
+        return [];
+    }
+}
+
+// Fetch and process replies
+async function fetchReplies() {
+    try {
+        if (CONFIG.DEBUG_MODE === 'true') {
+            debug('Using mock replies in development mode', 'info');
+            return {
+                mastodon: [
+                    {
+                        id: 'mock1',
+                        content: 'This is a test reply to your interesting post about AI',
+                        account: 'tester@mastodon.social',
+                        inReplyToId: 'original1'
+                    }
+                ],
+                bluesky: [
+                    {
+                        id: 'mock2',
+                        content: 'Fascinating thoughts about machine learning! What do you think about neural networks?',
+                        author: 'tester.bsky.social',
+                        uri: 'at://mock/post/1',
+                        replyTo: 'at://original/post/1'
+                    }
+                ]
+            };
+        }
+
+        const replies = {
+            mastodon: [],
+            bluesky: []
+        };
+
+        // Fetch Mastodon replies
+        if (CONFIG.MASTODON_ACCESS_TOKEN) {
+            try {
+                const mastodonResponse = await fetch(
+                    `${CONFIG.MASTODON_API_URL}/api/v1/notifications?types[]=mention`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${CONFIG.MASTODON_ACCESS_TOKEN}`
+                        }
+                    }
+                );
+
+                if (mastodonResponse.ok) {
+                    const mentions = await mastodonResponse.json();
+                    replies.mastodon = mentions
+                        .filter(mention => mention.type === 'mention')
+                        .map(mention => ({
+                            id: mention.status.id,
+                            content: mention.status.content,
+                            account: mention.account.acct,
+                            inReplyToId: mention.status.in_reply_to_id
+                        }));
+                }
+            } catch (error) {
+                debug(`Error fetching Mastodon replies: ${error.message}`, 'error');
+            }
+        }
+
+        // Fetch Bluesky replies
+        if (CONFIG.BLUESKY_USERNAME && CONFIG.BLUESKY_PASSWORD) {
+            try {
+                const auth = await getBlueskyAuth();
+                if (auth && auth.accessJwt) {
+                    const notificationsResponse = await fetch(
+                        `${CONFIG.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications`,
+                        {
+                            headers: {
+                                'Authorization': `Bearer ${auth.accessJwt}`
+                            }
+                        }
+                    );
+
+                    if (notificationsResponse.ok) {
+                        const notifications = await notificationsResponse.json();
+                        replies.bluesky = notifications.notifications
+                            .filter(notif => notif.reason === 'reply')
+                            .map(notif => ({
+                                id: notif.cid,
+                                content: notif.record.text,
+                                author: notif.author.handle,
+                                uri: notif.uri,
+                                replyTo: notif.record.reply?.parent.uri
+                            }));
+                    }
+                }
+            } catch (error) {
+                debug(`Error fetching Bluesky replies: ${error.message}`, 'error');
+            }
+        }
+
+        return replies;
     } catch (error) {
         debug(`Error fetching replies: ${error.message}`, 'error');
+        return {
+            mastodon: [],
+            bluesky: []
+        };
     }
-
-    return replies;
 }
 
 // Generate and post replies
@@ -627,13 +528,13 @@ async function generatePost(contentArray) {
     debug(`Processing ${cleanContent.length} content items`, 'verbose');
 
     try {
-        const markov = new MarkovChain(CONFIG.markovStateSize);
+        const markov = new MarkovChain(CONFIG.MARKOV_STATE_SIZE);
         markov.addData(cleanContent);
 
         const options = {
-            maxTries: CONFIG.markovMaxTries,
-            minChars: CONFIG.markovMinChars,
-            maxChars: CONFIG.markovMaxChars
+            maxTries: CONFIG.MAX_GENERATION_ATTEMPTS,
+            minChars: CONFIG.POST_MIN_LENGTH,
+            maxChars: CONFIG.POST_MAX_LENGTH
         };
 
         const result = markov.generate(options);
@@ -653,10 +554,10 @@ async function generatePost(contentArray) {
 // Social Media Integration
 async function postToMastodon(content, replyToId = null) {
     try {
-        const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
+        const response = await fetch(`${CONFIG.MASTODON_API_URL}/api/v1/statuses`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
+                'Authorization': `Bearer ${CONFIG.MASTODON_ACCESS_TOKEN}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -693,7 +594,7 @@ async function postToBluesky(content, replyTo = null) {
             } : {})
         };
 
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
+        const response = await fetch(`${CONFIG.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${auth.accessJwt}`,
@@ -758,6 +659,87 @@ async function postToSocialMedia(content) {
     }
 }
 
+// Bluesky Authentication
+async function getBlueskyAuth() {
+    try {
+        debug('Authenticating with Bluesky...', 'verbose');
+        
+        // Validate credentials
+        if (!CONFIG.BLUESKY_USERNAME || !CONFIG.BLUESKY_PASSWORD) {
+            throw new Error('Missing Bluesky credentials');
+        }
+        
+        if (!validateBlueskyUsername(CONFIG.BLUESKY_USERNAME)) {
+            throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
+        }
+
+        const authData = {
+            "identifier": CONFIG.BLUESKY_USERNAME,
+            "password": CONFIG.BLUESKY_PASSWORD
+        };
+
+        debug('Sending Bluesky auth request...', 'verbose');
+
+        const response = await fetch(`${CONFIG.BLUESKY_API_URL}/xrpc/com.atproto.server.createSession`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(authData)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            debug('Bluesky authentication failed', 'error', errorData);
+            throw new Error(`Bluesky authentication error: ${errorData.message || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+        if (!data || !data.accessJwt) {
+            debug('Bluesky authentication response missing access token', 'error', data);
+            return null;
+        }
+
+        debug('Successfully authenticated with Bluesky', 'verbose');
+        return data;
+    } catch (error) {
+        debug(`Bluesky authentication error: ${error.message}`, 'error');
+        return null;
+    }
+}
+
+async function getBlueskyDid() {
+    try {
+        if (!CONFIG.BLUESKY_USERNAME) {
+            throw new Error('Missing Bluesky username');
+        }
+
+        const response = await fetch(
+            `${CONFIG.BLUESKY_API_URL}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.BLUESKY_USERNAME}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            debug('Failed to resolve Bluesky DID', 'error', errorData);
+            throw new Error(`Failed to resolve Bluesky DID: ${errorData.message || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+        debug(`Resolved DID for ${CONFIG.BLUESKY_USERNAME}: ${data.did}`, 'info');
+        return data.did;
+    } catch (error) {
+        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
+        return null;
+    }
+}
+
 // Main Execution
 async function main(event = {}) {
     try {
@@ -765,10 +747,26 @@ async function main(event = {}) {
         const contentArray = await fetchTextContent();
         
         // Initialize Markov chain with existing content
-        const markovChain = new MarkovChain(CONFIG.markovStateSize);
+        const markovChain = new MarkovChain(CONFIG.MARKOV_STATE_SIZE);
         markovChain.addData(contentArray);
 
-        // Get the current minute to determine which cron triggered this
+        // Handle test events
+        if (event.type === 'test') {
+            switch (event.action) {
+                case 'checkReplies':
+                    debug('Test mode: Checking replies only', 'info');
+                    await handleReplies(markovChain);
+                    return;
+                
+                case 'generatePost':
+                    debug('Test mode: Generating post', 'info');
+                    const post = await generatePost(contentArray);
+                    await postToSocialMedia(post);
+                    return;
+            }
+        }
+
+        // Regular scheduled execution
         const currentMinute = new Date().getMinutes();
         const isHourlyCheck = currentMinute % 15 === 0;
         const isTwoHourCheck = currentMinute === 0 && new Date().getHours() % 2 === 0;
