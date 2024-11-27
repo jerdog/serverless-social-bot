@@ -39,5 +39,8 @@ vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
 # MASTODON_SOURCE_ACCOUNTS
 # EXCLUDED_WORDS
 
+[assets]
+directory = "assets"
+
 [observability.logs]
 enabled = true

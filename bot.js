@@ -1,5 +1,6 @@
 // Essential imports only
 import fetch from 'node-fetch';
+import MarkovChain from './markov.js';
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -214,87 +215,42 @@ function cleanText(text) {
     return text;
 }
 
-// Markov Chain Implementation
-class MarkovChain {
-    constructor(stateSize = 2) {
-        this.stateSize = stateSize;
-        this.chain = new Map();
-        this.startStates = [];
-    }
-
-    addData(texts) {
-        for (const text of texts) {
-            if (typeof text !== 'string' || !text.trim()) continue;
-            
-            const words = text.trim().split(/\s+/);
-            if (words.length < this.stateSize + 1) continue;
-
-            const startState = words.slice(0, this.stateSize).join(' ');
-            this.startStates.push(startState);
-
-            for (let i = 0; i <= words.length - this.stateSize; i++) {
-                const state = words.slice(i, i + this.stateSize).join(' ');
-                const nextWord = words[i + this.stateSize] || null;
-
-                if (!this.chain.has(state)) {
-                    this.chain.set(state, []);
-                }
-                if (nextWord) {
-                    this.chain.get(state).push(nextWord);
-                }
-            }
-        }
-    }
-
-    generate(options = {}) {
-        const {
-            maxTries = 100,
-            minChars = 100,
-            maxChars = 280
-        } = options;
-
-        for (let attempt = 0; attempt < maxTries; attempt++) {
-            try {
-                const startIdx = Math.floor(Math.random() * this.startStates.length);
-                let currentState = this.startStates[startIdx];
-                let result = currentState.split(/\s+/);
-                let currentLength = currentState.length;
-
-                // Generate text until we hit maxChars or can't generate more
-                while (currentLength < maxChars) {
-                    const nextWords = this.chain.get(currentState);
-                    if (!nextWords || nextWords.length === 0) break;
-
-                    const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
-                    if (!nextWord) break;
-
-                    // Check if adding the next word would exceed maxChars
-                    const newLength = currentLength + 1 + nextWord.length; // +1 for space
-                    if (newLength > maxChars) break;
-
-                    result.push(nextWord);
-                    currentLength = newLength;
-                    const words = result.slice(-this.stateSize);
-                    currentState = words.join(' ');
-                }
-
-                const generatedText = result.join(' ');
-                // Check if the generated text meets our length criteria
-                if (generatedText.length >= minChars && generatedText.length <= maxChars) {
-                    debug(`Generated text length: ${generatedText.length} characters`, 'verbose');
-                    return { string: generatedText };
-                }
-                debug(`Attempt ${attempt + 1}: Generated text (${generatedText.length} chars) outside bounds [${minChars}, ${maxChars}]`, 'verbose');
-            } catch (error) {
-                debug(`Generation attempt ${attempt + 1} failed: ${error.message}`, 'verbose');
-                continue;
-            }
-        }
-        throw new Error(`Failed to generate text between ${minChars} and ${maxChars} characters after ${maxTries} attempts`);
+async function fetchTrainingData(env) {
+    try {
+        const tweets = await env.ASSETS.get('tweets.txt').text();
+        const lines = tweets.split('\n').filter(line => 
+            line.trim() && 
+            !line.startsWith('RT ') && 
+            !line.includes('@') && 
+            !line.includes('http') &&
+            !line.includes('#')
+        );
+        
+        return lines.join(' ');
+    } catch (error) {
+        console.error('Error fetching training data:', error);
+        return '';
     }
 }
 
-// Content Management
+async function generateContent(env) {
+    const trainingData = await fetchTrainingData(env);
+    if (!trainingData) {
+        throw new Error('No training data available');
+    }
+
+    const markov = new MarkovChain(parseInt(env.MARKOV_STATE_SIZE || '2'));
+    markov.addData(trainingData);
+
+    const options = {
+        maxTries: parseInt(env.MARKOV_MAX_TRIES || '100'),
+        minChars: parseInt(env.MARKOV_MIN_CHARS || '100'),
+        maxChars: parseInt(env.MARKOV_MAX_CHARS || '280')
+    };
+
+    return markov.generate(options);
+}
+
 async function fetchTextContent() {
     // In worker environment, we'll fetch content from the APIs directly
     const posts = await fetchRecentPosts();
@@ -466,43 +422,6 @@ async function getBlueskyDid() {
     }
 }
 
-// Post Generation
-async function generatePost(contentArray) {
-    if (!contentArray || contentArray.length === 0) {
-        throw new Error('Content array is empty. Cannot generate Markov chain.');
-    }
-
-    const cleanContent = contentArray.filter(content => 
-        typeof content === 'string' && content.trim().length > 0
-    ).map(content => content.trim());
-
-    debug(`Processing ${cleanContent.length} content items`, 'verbose');
-
-    try {
-        const markov = new MarkovChain(CONFIG.markovStateSize);
-        markov.addData(cleanContent);
-
-        const options = {
-            maxTries: CONFIG.markovMaxTries,
-            minChars: CONFIG.markovMinChars,
-            maxChars: CONFIG.markovMaxChars
-        };
-
-        const result = markov.generate(options);
-        debug(`Generated post length: ${result.string.length} characters`, 'verbose');
-        
-        if (!result || !result.string) {
-            throw new Error('Failed to generate valid post');
-        }
-
-        return result.string;
-    } catch (error) {
-        debug(`Error generating Markov chain: ${error.message}`, 'error');
-        throw new Error(`Failed to generate post: ${error.message}`);
-    }
-}
-
-// Social Media Integration
 async function postToMastodon(content) {
     const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
         method: 'POST',
@@ -632,7 +551,7 @@ async function main() {
         }
 
         // Generate post
-        const post = await generatePost(sourceContent);
+        const post = await generateContent();
         if (!post) {
             debug('Failed to generate valid post', 'error');
             return;
@@ -646,5 +565,11 @@ async function main() {
     }
 }
 
-// Export for worker
-export { debug, main };
+// Export necessary functions
+export {
+    debug,
+    main,
+    generateContent,
+    postToBluesky,
+    postToMastodon
+};
