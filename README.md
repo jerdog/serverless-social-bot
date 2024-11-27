@@ -215,6 +215,12 @@ DEBUG_LEVEL = "info"
 4. Push to the branch
 5. Create a Pull Request
 
+## TODO
+
+- Add better Markov Chain generation
+- Add other deployments than Cloudflare Workers
+- 
+
 ## License
 
 MIT License - see LICENSE file for details
