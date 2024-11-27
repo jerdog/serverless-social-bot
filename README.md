@@ -47,14 +47,14 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - Node.js v18 or higher
 - npm or yarn
 - Mastodon account with API access
-- Bluesky account with API access
-- Cloudflare account (for deployment)
+- [Bluesky](https://bsky.app) account with API access
+- [Cloudflare](https://developers.cloudflare.com) account (for deployment)
 
 ## Installation
 
-1. Clone the repository:
+1. [Fork](https://github.com/jerdog/serverless-social-bot/fork) and Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/serverless-social-bot.git
+   git clone https://github.com/<yourusername>/serverless-social-bot.git
    cd serverless-social-bot
    ```
 
@@ -71,16 +71,16 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 4. Edit `.dev.vars` with your configuration:
    ```env
    # Bluesky Configuration
-   BLUESKY_USERNAME=mybot.bsky.social
-   BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
+   BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
 
    # Mastodon Configuration
-   MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+   MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
    MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
    # Source Accounts Configuration
-   BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
-   MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
+   BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
+   MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
 
    # Content Filtering
    EXCLUDED_WORDS=["word1", "word2", "word3"]
@@ -152,16 +152,16 @@ For local development, you can use the provided `.dev.vars.example` as a templat
 
 ```env
 # Bluesky Configuration
-BLUESKY_USERNAME=mybot.bsky.social
-BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
+BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
 
 # Mastodon Configuration
-MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
 MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
 # Source Accounts Configuration
-BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
-MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
 
 # Content Filtering
 EXCLUDED_WORDS=["word1", "word2", "word3"]
@@ -186,7 +186,7 @@ crons = ["0 */2 * * *"]  # Run every 2 hours
 [vars]
 # API Endpoints
 BLUESKY_API_URL = "https://bsky.social"
-MASTODON_API_URL = "https://mastodon.social"
+MASTODON_API_URL = "https://mastodon.social"  # Optional, defaults to mastodon.social
 
 # Markov Chain Settings
 MARKOV_STATE_SIZE = 2
@@ -201,8 +201,8 @@ DEBUG_LEVEL = "info"
 
 ## Security Best Practices
 
-- Never commit `.dev.vars` to version control
-- Use app-specific passwords for Bluesky
+- _**Never commit `.dev.vars` to version control**_
+- **Use app-specific passwords for Bluesky**
 - Store all sensitive data as Cloudflare secrets in production
 - Keep your `wrangler.toml` configuration clean of sensitive data
 - Regularly rotate your API tokens and passwords
