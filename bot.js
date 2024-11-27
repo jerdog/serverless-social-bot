@@ -1,66 +1,7 @@
 // Essential imports only
-import 'dotenv/config';
 import fetch from 'node-fetch';
-import { promises as fs } from 'fs';
 
-// Configuration
-const CONFIG = {
-    debug: process.env.DEBUG_MODE === 'true',
-    debugLevel: process.env.DEBUG_LEVEL || 'info',
-    
-    // Markov Chain settings
-    markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-    markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-    markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-    markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
-    
-    // Content filtering
-    excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
-    
-    // Bluesky settings
-    blueskyUsername: process.env.BLUESKY_USERNAME,
-    blueskyPassword: process.env.BLUESKY_PASSWORD,
-    blueskyApiUrl: process.env.BLUESKY_API_URL,
-    blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-    
-    // Mastodon settings
-    mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-    mastodonApiUrl: process.env.MASTODON_API_URL,
-    mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
-};
-
-// Utility Functions
-function debug(message, level = 'info', data = null) {
-    // Always show errors
-    if (level === 'error') {
-        const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [ERROR] ${message}`);
-        if (data) console.log(data);
-        return;
-    }
-
-    // In non-debug mode, only show essential info
-    if (!CONFIG.debug) {
-        if (level === 'essential') {
-            const timestamp = new Date().toISOString();
-            console.log(`[${timestamp}] ${message}`);
-            if (data) console.log(data);
-        }
-        return;
-    }
-
-    // In debug mode, show everything based on debug level
-    if (CONFIG.debugLevel === 'info' && level === 'verbose') return;
-
-    const timestamp = new Date().toISOString();
-    const logLevel = level.toUpperCase();
-    console.log(`[${timestamp}] [${logLevel}] ${message}`);
-    
-    if (data && (CONFIG.debugLevel === 'verbose' || level === 'error')) {
-        console.log(data);
-    }
-}
-
+// HTML processing functions
 function decodeHtmlEntities(text) {
     const entities = {
         '&amp;': '&',
@@ -68,21 +9,177 @@ function decodeHtmlEntities(text) {
         '&gt;': '>',
         '&quot;': '"',
         '&#39;': "'",
-        '&apos;': "'",
-        '&#x2F;': '/',
-        '&#x2f;': '/',
-        '&#x5C;': '\\',
-        '&#x5c;': '\\',
-        '&nbsp;': ' '
+        '&nbsp;': ' ',
+        '&ndash;': '-',
+        '&mdash;': '--',
+        '&hellip;': '...',
+        '&trade;': 'TM',
+        '&copy;': '(c)',
+        '&reg;': '(R)',
+        '&deg;': 'degrees',
+        '&plusmn;': '+/-',
+        '&para;': '(P)',
+        '&sect;': '(S)',
+        '&ldquo;': '"',
+        '&rdquo;': '"',
+        '&lsquo;': "'",
+        '&rsquo;': "'",
+        '&laquo;': '<<',
+        '&raquo;': '>>',
+        '&times;': 'x',
+        '&divide;': '/',
+        '&cent;': 'c',
+        '&pound;': 'GBP',
+        '&euro;': 'EUR',
+        '&bull;': '*'
     };
+    return text.replace(/&[^;]+;/g, entity => entities[entity] || '');
+}
+
+function stripHtmlTags(text) {
+    // First replace common block elements with space for better sentence separation
+    text = text
+        .replace(/<\/(p|div|br|h[1-6]|li)>/gi, ' ')
+        .replace(/<(p|div|br|h[1-6]|li)[^>]*>/gi, ' ');
     
-    return text.replace(/&[#\w]+;/g, entity => entities[entity] || entity);
+    // Then remove all remaining HTML tags
+    text = text.replace(/<[^>]+>/g, '');
+    
+    // Clean up excessive whitespace
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+// Utility Functions
+function debug(message, level = 'info', data = null) {
+    const timestamp = new Date().toISOString();
+    const prefix = level === 'error' ? '[ERROR]' : level === 'verbose' ? '[VERBOSE]' : '';
+    
+    // Only log verbose messages if debug mode is enabled
+    if (level === 'verbose' && process.env.DEBUG_MODE !== 'true') {
+        return;
+    }
+    
+    console.log(`[${timestamp}] ${prefix} ${message}`);
+    if (data) {
+        console.log(data);
+    }
+}
+
+// Configuration loader
+function loadConfig() {
+    try {
+        debug('Loading configuration...', 'verbose');
+
+        // Load configuration from environment variables
+        const config = {
+            debug: process.env.DEBUG_MODE === 'true',
+            debugLevel: process.env.DEBUG_LEVEL || 'info',
+            
+            // Markov Chain settings
+            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
+            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
+            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
+            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
+            
+            // Content filtering
+            excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
+            
+            // Bluesky settings
+            blueskyUsername: process.env.BLUESKY_USERNAME,
+            blueskyPassword: process.env.BLUESKY_PASSWORD,
+            blueskyApiUrl: process.env.BLUESKY_API_URL ? process.env.BLUESKY_API_URL.replace(/\/$/, '') : undefined,
+            blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
+            
+            // Mastodon settings
+            mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
+            mastodonApiUrl: process.env.MASTODON_API_URL ? process.env.MASTODON_API_URL.replace(/\/$/, '') : undefined,
+            mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+        };
+
+        // Log loaded configuration (excluding sensitive data)
+        debug('Loaded configuration:', 'verbose', {
+            debug: config.debug,
+            debugLevel: config.debugLevel,
+            markovSettings: {
+                stateSize: config.markovStateSize,
+                maxTries: config.markovMaxTries,
+                minChars: config.markovMinChars,
+                maxChars: config.markovMaxChars
+            },
+            blueskyUsername: config.blueskyUsername,
+            blueskyApiUrl: config.blueskyApiUrl,
+            mastodonApiUrl: config.mastodonApiUrl
+        });
+
+        // Validate required configuration
+        const requiredVars = [
+            ['BLUESKY_USERNAME', config.blueskyUsername],
+            ['BLUESKY_PASSWORD', config.blueskyPassword],
+            ['BLUESKY_API_URL', config.blueskyApiUrl],
+            ['MASTODON_ACCESS_TOKEN', config.mastodonAccessToken],
+            ['MASTODON_API_URL', config.mastodonApiUrl]
+        ];
+
+        const missingVars = requiredVars
+            .filter(([name, value]) => !value)
+            .map(([name]) => name);
+
+        if (missingVars.length > 0) {
+            throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+        }
+
+        // Validate Bluesky username
+        if (!validateBlueskyUsername(config.blueskyUsername)) {
+            const errorMsg = `Invalid Bluesky username format: "${config.blueskyUsername}". ` +
+                'Username should be in the format "handle.bsky.social" or "handle.domain.tld". ' +
+                'Make sure to include the full domain and check for typos.';
+            debug(errorMsg, 'error');
+            throw new Error(errorMsg);
+        }
+
+        return config;
+    } catch (error) {
+        debug(`Error loading configuration: ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+// Global config object
+let CONFIG = null;
+
+// Utility Functions
+function validateBlueskyUsername(username) {
+    if (!username) {
+        debug('Username is empty', 'error');
+        return false;
+    }
+    
+    debug(`Validating Bluesky username: ${username}`, 'verbose');
+    
+    // Remove any leading @ if present
+    username = username.replace(/^@/, '');
+    
+    // Allow any username that contains at least one dot
+    // This covers handle.bsky.social, handle.domain.tld, etc.
+    if (username.includes('.')) {
+        const handle = username.split('.')[0];
+        // Basic handle validation - allow letters, numbers, underscores, and hyphens
+        if (handle.match(/^[a-zA-Z0-9_-]+$/)) {
+            return true;
+        }
+    }
+    
+    debug(`Invalid username format: ${username}`, 'error');
+    return false;
 }
 
 function cleanText(text) {
     if (!text || typeof text !== 'string') return '';
 
-    // First decode HTML entities
+    // First strip HTML tags
+    text = stripHtmlTags(text);
+
+    // Then decode HTML entities
     text = decodeHtmlEntities(text);
 
     // Basic cleaning
@@ -102,6 +199,17 @@ function cleanText(text) {
         const excludedWordsRegex = new RegExp(`\\b(${CONFIG.excludedWords.join('|')})\\b`, 'gi');
         text = text.replace(excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
     }
+
+    // Final cleanup of any remaining special characters
+    text = text
+        // Replace smart quotes with regular quotes
+        .replace(/[""]/g, '"')
+        .replace(/['']/g, "'")
+        // Remove any remaining control characters
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+        // Clean up multiple spaces again
+        .replace(/\s+/g, ' ')
+        .trim();
 
     return text;
 }
@@ -188,57 +296,9 @@ class MarkovChain {
 
 // Content Management
 async function fetchTextContent() {
-    const textData = await fs.readFile('tweets.txt', 'utf8');
-    return textData.split('\n').map(cleanText).filter(text => text.length > 0);
-}
-
-async function getBlueskyAuth() {
-    try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                identifier: CONFIG.blueskyUsername,
-                password: CONFIG.blueskyPassword
-            })
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug('Bluesky authentication failed', 'error', data);
-            return null;
-        }
-
-        return data.accessJwt;
-    } catch (error) {
-        debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
-        return null;
-    }
-}
-
-async function getBlueskyDid() {
-    try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
-            return null;
-        }
-
-        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
-        return data.did;
-    } catch (error) {
-        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
-        return null;
-    }
+    // In worker environment, we'll fetch content from the APIs directly
+    const posts = await fetchRecentPosts();
+    return posts.map(cleanText).filter(text => text.length > 0);
 }
 
 async function fetchRecentPosts() {
@@ -254,11 +314,19 @@ async function fetchRecentPosts() {
 
         try {
             // Fetch from Mastodon
-            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/home`, {
+            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/public`, {
                 headers: {
-                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
+                    'Accept': 'application/json'
                 }
             });
+            
+            if (!mastodonResponse.ok) {
+                const errorData = await mastodonResponse.json();
+                debug('Mastodon API error', 'error', errorData);
+                throw new Error(`Mastodon API error: ${errorData.error || 'Unknown error'}`);
+            }
+            
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {
@@ -322,6 +390,79 @@ async function fetchRecentPosts() {
     } catch (error) {
         debug(`Error in fetchRecentPosts: ${error.message}`, 'error');
         return [];
+    }
+}
+
+async function getBlueskyAuth() {
+    try {
+        debug('Authenticating with Bluesky...', 'verbose');
+        debug(`Using Bluesky username: ${CONFIG.blueskyUsername}`, 'verbose');
+        
+        // Validate credentials
+        if (!CONFIG.blueskyUsername || !CONFIG.blueskyPassword) {
+            throw new Error('Missing Bluesky credentials');
+        }
+        
+        if (!validateBlueskyUsername(CONFIG.blueskyUsername)) {
+            throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
+        }
+
+        const authData = {
+            "identifier": CONFIG.blueskyUsername,
+            "password": CONFIG.blueskyPassword
+        };
+
+        debug('Sending Bluesky auth request...', 'verbose', authData);
+
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(authData)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            debug('Bluesky authentication failed', 'error', errorData);
+            throw new Error(`Bluesky authentication error: ${errorData.message || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+        if (!data || !data.accessJwt) {
+            debug('Bluesky authentication response missing access token', 'error', data);
+            return null;
+        }
+
+        debug('Successfully authenticated with Bluesky', 'verbose');
+        return data.accessJwt;
+    } catch (error) {
+        debug(`Bluesky authentication error: ${error.message}`, 'error');
+        return null;
+    }
+}
+
+async function getBlueskyDid() {
+    try {
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (data.error) {
+            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
+            return null;
+        }
+
+        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
+        return data.did;
+    } catch (error) {
+        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
+        return null;
     }
 }
 
@@ -465,6 +606,9 @@ async function postToSocialMedia(content) {
 // Main Execution
 async function main() {
     try {
+        // Load configuration
+        CONFIG = await loadConfig();
+        
         debug('Bot started', 'essential');
         
         if (CONFIG.excludedWords.length > 0) {
@@ -480,51 +624,27 @@ async function main() {
 
         debug('Random check passed - proceeding with generation (30% probability)', 'essential');
         
-        const fileContent = await fetchTextContent();
-        debug(`Loaded ${fileContent.length} lines from text file`, 'info');
-        
-        const recentPosts = await fetchRecentPosts();
-        debug(`Total posts retrieved: ${recentPosts.length}`, 'essential');
-        
-        const allContent = [...fileContent, ...recentPosts];
-        debug(`Total content items for processing: ${allContent.length}`, 'info');
-        
-        const generatedPost = await generatePost(allContent);
-        
-        debug('Generated post:', 'essential');
-        debug('---Generated Post Start---', 'essential');
-        debug(generatedPost, 'essential');
-        debug('---Generated Post End---', 'essential');
-        
-        if (!CONFIG.debug) {
-            debug('Posting to social media platforms', 'essential');
-            await postToSocialMedia(generatedPost);
-            debug('Successfully posted to all platforms', 'essential');
-        } else {
-            debug('Debug mode enabled - skipping actual posting', 'info');
+        // Get source content
+        const sourceContent = await fetchTextContent();
+        if (!sourceContent || sourceContent.length === 0) {
+            debug('No source content available', 'error');
+            return;
         }
-        
+
+        // Generate post
+        const post = await generatePost(sourceContent);
+        if (!post) {
+            debug('Failed to generate valid post', 'error');
+            return;
+        }
+
+        // Post to social media
+        await postToSocialMedia(post);
     } catch (error) {
         debug(`Error in main execution: ${error.message}`, 'error');
         throw error;
     }
 }
 
-// Start the bot if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-    main().catch(error => {
-        console.error('Fatal error:', error);
-        process.exit(1);
-    });
-}
-
-// Error handling for the main process
-process.on('unhandledRejection', (error) => {
-    debug(`Unhandled rejection: ${error.message}`, 'error');
-    process.exit(1);
-});
-
-process.on('uncaughtException', (error) => {
-    debug(`Uncaught exception: ${error.message}`, 'error');
-    process.exit(1);
-});
+// Export for worker
+export { debug, main };

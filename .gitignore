@@ -26,6 +26,12 @@ node_modules/
 .vscode-test
 .vscode
 
+# Cloudflare Workers
+.wrangler/
+.dev.vars
+dist/
+worker/
+
 # Ignore the following files in the root of this repository:
 .DS_Store
 tweets.txt

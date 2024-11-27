@@ -21,9 +21,14 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - **Content Processing**
   - Removes URLs and @mentions
   - Preserves hashtags
-  - Converts HTML entities to actual characters (e.g., &amp; → &)
+  - Advanced HTML processing:
+    - Intelligent HTML tag handling
+    - Block element preservation (p, div, headers, lists)
+    - Comprehensive HTML entity conversion
+    - Special character normalization
   - Filters empty or invalid content
-  - Maintains natural text flow
+  - Maintains natural text flow and spacing
+  - Content filtering with excluded words
 
 - **Smart Posting**
   - 30% random chance of posting on each run
@@ -43,6 +48,7 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - npm or yarn
 - Mastodon account with API access
 - Bluesky account with API access
+- Cloudflare account (for deployment)
 
 ## Installation
 
@@ -57,118 +63,149 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
    npm install
    ```
 
-3. Create a `.env` file with your configuration:
+3. Copy the example environment file:
+   ```bash
+   cp .dev.vars.example .dev.vars
+   ```
+
+4. Edit `.dev.vars` with your configuration:
    ```env
-   # Bluesky Credentials
-   BLUESKY_USERNAME="your.username.bsky.social"
-   BLUESKY_PASSWORD="your-password"
-   BLUESKY_API_URL="https://bsky.social"
-   BLUESKY_SOURCE_ACCOUNTS=["@user1.bsky.social","@user2.bsky.social"]
+   # Bluesky Configuration
+   BLUESKY_USERNAME=mybot.bsky.social
+   BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
 
-   # Mastodon Credentials
-   MASTODON_ACCESS_TOKEN="your-access-token"
-   MASTODON_API_URL="https://your-instance.social"
-   MASTODON_SOURCE_ACCOUNTS=["@user1@instance.social","@user2@instance.social"]
+   # Mastodon Configuration
+   MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+   MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
-   # Markov Chain Configuration
-   MARKOV_STATE_SIZE=2
-   MARKOV_MAX_TRIES=100
-   MARKOV_MIN_CHARS=100
-   MARKOV_MAX_CHARS=280
+   # Source Accounts Configuration
+   BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
+   MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
 
    # Content Filtering
-   EXCLUDED_WORDS=["word1","word2","word3"]
+   EXCLUDED_WORDS=["word1", "word2", "word3"]
 
-   # Debug Settings
+   # Debug Configuration (Optional)
    DEBUG_MODE=true
-   DEBUG_LEVEL='verbose'
+   DEBUG_LEVEL=verbose  # or "info"
    ```
 
 ## Usage
 
-1. Add your source content to `tweets.txt` (one entry per line)
+### Local Development
 
-2. Run in debug mode to test generation:
+1. Start the development server:
    ```bash
-   DEBUG_MODE=true node bot.js
+   npm run dev
    ```
 
-3. Run in production mode to post to social media:
+2. Test the bot by sending a POST request:
    ```bash
-   DEBUG_MODE=false node bot.js
+   curl -X POST http://127.0.0.1:8787
    ```
 
-Note: The bot has a 30% chance of generating and posting content each time it runs. This randomness helps create a more natural posting pattern and prevents overwhelming your social media feeds. When the script runs but doesn't post, it will log a message indicating the random check failed.
+### Production Deployment
 
-## Environment Variables
+1. Install Cloudflare Workers CLI (if not already installed):
+   ```bash
+   npm install -g wrangler
+   ```
 
-Copy `.env-example` to `.env` and configure the following variables:
+2. Authenticate with Cloudflare:
+   ```bash
+   wrangler login
+   ```
 
-### Authentication
+3. Add your secrets to Cloudflare:
+   ```bash
+   wrangler secret put BLUESKY_USERNAME
+   wrangler secret put BLUESKY_PASSWORD
+   wrangler secret put MASTODON_ACCESS_TOKEN
+   wrangler secret put BLUESKY_SOURCE_ACCOUNTS
+   wrangler secret put MASTODON_SOURCE_ACCOUNTS
+   wrangler secret put EXCLUDED_WORDS
+   ```
 
-#### Bluesky
-- `BLUESKY_USERNAME`: Your Bluesky handle (e.g., "username.bsky.social")
+4. Deploy to Cloudflare Workers:
+   ```bash
+   npm run deploy
+   ```
+
+The worker will automatically run every 2 hours. You can monitor its execution in the Cloudflare Dashboard under Workers & Pages > your-worker > Logs.
+
+Note: The 30% random posting chance is still active in the worker, so it will only actually post about once every 6-7 hours on average.
+
+## Configuration
+
+### Development Variables (.dev.vars)
+
+Store sensitive information and user-specific settings in `.dev.vars`:
+
+- `BLUESKY_USERNAME`: Your Bluesky handle (format: username.bsky.social)
 - `BLUESKY_PASSWORD`: Your Bluesky app password
-- `BLUESKY_API_URL`: Bluesky API URL (default: "https://bsky.social")
-- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from (e.g., `["@user1.bsky.social"]`)
-
-#### Mastodon
 - `MASTODON_ACCESS_TOKEN`: Your Mastodon access token
-- `MASTODON_API_URL`: Your Mastodon instance API URL
-- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from (e.g., `["@user@instance.social"]`)
+- `BLUESKY_SOURCE_ACCOUNTS`: JSON array of Bluesky accounts to learn from
+- `MASTODON_SOURCE_ACCOUNTS`: JSON array of Mastodon accounts to learn from
+- `EXCLUDED_WORDS`: JSON array of words to exclude from generated posts
 
-### Content Generation
+For local development, you can use the provided `.dev.vars.example` as a template:
 
-#### Markov Chain Settings
-- `MARKOV_STATE_SIZE`: Number of words to consider for next word prediction (default: 2)
-- `MARKOV_MAX_TRIES`: Maximum attempts to generate valid content (default: 100)
-- `MARKOV_MIN_CHARS`: Minimum characters in generated post (default: 100)
-- `MARKOV_MAX_CHARS`: Maximum characters in generated post (default: 280)
-
-#### Content Filtering
-- `EXCLUDED_WORDS`: Array of words to exclude from generated posts (e.g., `["word1","word2"]`)
-  - Case-insensitive matching
-  - Matches whole words only
-  - Optional, defaults to empty array
-
-### Debug Settings
-- `DEBUG_MODE`: Enable debug output (true/false)
-- `DEBUG_LEVEL`: Debug verbosity level ("info"/"verbose"/"essential")
-
-Example `.env` file:
 ```env
-# Bluesky Credentials
-BLUESKY_USERNAME="username.bsky.social"
-BLUESKY_PASSWORD="app-password"
-BLUESKY_API_URL="https://bsky.social"
-BLUESKY_SOURCE_ACCOUNTS=["@user1.bsky.social"]
+# Bluesky Configuration
+BLUESKY_USERNAME=mybot.bsky.social
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
 
-# Mastodon Credentials
-MASTODON_ACCESS_TOKEN="your-access-token"
-MASTODON_API_URL="https://instance.social"
-MASTODON_SOURCE_ACCOUNTS=["@user@instance.social"]
+# Mastodon Configuration
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
-# Markov Chain Configuration
-MARKOV_STATE_SIZE=2
-MARKOV_MAX_TRIES=100
-MARKOV_MIN_CHARS=100
-MARKOV_MAX_CHARS=280
+# Source Accounts Configuration
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
 
 # Content Filtering
-EXCLUDED_WORDS=["word1","word2","word3"]
+EXCLUDED_WORDS=["word1", "word2", "word3"]
 
-# Debug Settings
-DEBUG_MODE=false
-DEBUG_LEVEL="info"
+# Debug Configuration (Optional)
+DEBUG_MODE=true
+DEBUG_LEVEL=verbose  # or "info"
 ```
 
-## Security
+### Worker Configuration (wrangler.toml)
 
-- Store credentials in `.env` file (not in version control)
-- Use environment variables for sensitive data
-- Implement API rate limiting
-- Follow platform-specific security guidelines
-- Use app-specific passwords when available
+Non-sensitive configuration is stored in `wrangler.toml`:
+
+```toml
+name = "serverless-social-bot"
+main = "worker.js"
+compatibility_date = "2023-01-01"
+
+[triggers]
+crons = ["0 */2 * * *"]  # Run every 2 hours
+
+[vars]
+# API Endpoints
+BLUESKY_API_URL = "https://bsky.social"
+MASTODON_API_URL = "https://mastodon.social"
+
+# Markov Chain Settings
+MARKOV_STATE_SIZE = 2
+MARKOV_MAX_TRIES = 100
+MARKOV_MIN_CHARS = 100
+MARKOV_MAX_CHARS = 280
+
+# Debug Settings
+DEBUG_MODE = false
+DEBUG_LEVEL = "info"
+```
+
+## Security Best Practices
+
+- Never commit `.dev.vars` to version control
+- Use app-specific passwords for Bluesky
+- Store all sensitive data as Cloudflare secrets in production
+- Keep your `wrangler.toml` configuration clean of sensitive data
+- Regularly rotate your API tokens and passwords
 
 ## Contributing
 
