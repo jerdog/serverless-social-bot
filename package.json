@@ -1,18 +1,17 @@
 {
   "name": "serverless-social-bot",
   "version": "1.0.0",
-  "description": "A serverless social media bot that generates content using Markov chains",
+  "description": "A serverless social media bot using Markov chains",
   "type": "module",
-  "main": "bot.js",
   "scripts": {
-    "start": "node -r dotenv/config bot.js",
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev worker.js",
+    "deploy": "wrangler deploy worker.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^3.22.1"
   }
 }

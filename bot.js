@@ -14,86 +14,128 @@ function decodeHtmlEntities(text) {
     return text.replace(/&[^;]+;/g, entity => entities[entity] || entity);
 }
 
+// Utility Functions
+function debug(message, level = 'info', data = null) {
+    const timestamp = new Date().toISOString();
+    const prefix = level === 'error' ? '[ERROR]' : level === 'verbose' ? '[VERBOSE]' : '';
+    
+    // Only log verbose messages if debug mode is enabled
+    if (level === 'verbose' && process.env.DEBUG_MODE !== 'true') {
+        return;
+    }
+    
+    console.log(`[${timestamp}] ${prefix} ${message}`);
+    if (data) {
+        console.log(data);
+    }
+}
+
 // Configuration loader
 function loadConfig() {
-    // Load configuration from environment variables
-    const config = {
-        debug: process.env.DEBUG_MODE === 'true',
-        debugLevel: process.env.DEBUG_LEVEL || 'info',
-        
-        // Markov Chain settings
-        markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-        markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-        markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-        markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
-        
-        // Content filtering
-        excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
-        
-        // Bluesky settings
-        blueskyUsername: process.env.BLUESKY_USERNAME,
-        blueskyPassword: process.env.BLUESKY_PASSWORD,
-        blueskyApiUrl: process.env.BLUESKY_API_URL,
-        blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-        
-        // Mastodon settings
-        mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-        mastodonApiUrl: process.env.MASTODON_API_URL,
-        mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
-    };
+    try {
+        debug('Loading configuration...', 'verbose');
 
-    // Validate required configuration in local development
-    if (typeof process.env.CLOUDFLARE_WORKER === 'undefined') {
+        // Load configuration from environment variables
+        const config = {
+            debug: process.env.DEBUG_MODE === 'true',
+            debugLevel: process.env.DEBUG_LEVEL || 'info',
+            
+            // Markov Chain settings
+            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
+            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
+            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
+            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
+            
+            // Content filtering
+            excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
+            
+            // Bluesky settings
+            blueskyUsername: process.env.BLUESKY_USERNAME,
+            blueskyPassword: process.env.BLUESKY_PASSWORD,
+            blueskyApiUrl: process.env.BLUESKY_API_URL ? process.env.BLUESKY_API_URL.replace(/\/$/, '') : undefined,
+            blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
+            
+            // Mastodon settings
+            mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
+            mastodonApiUrl: process.env.MASTODON_API_URL ? process.env.MASTODON_API_URL.replace(/\/$/, '') : undefined,
+            mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+        };
+
+        // Log loaded configuration (excluding sensitive data)
+        debug('Loaded configuration:', 'verbose', {
+            debug: config.debug,
+            debugLevel: config.debugLevel,
+            markovSettings: {
+                stateSize: config.markovStateSize,
+                maxTries: config.markovMaxTries,
+                minChars: config.markovMinChars,
+                maxChars: config.markovMaxChars
+            },
+            blueskyUsername: config.blueskyUsername,
+            blueskyApiUrl: config.blueskyApiUrl,
+            mastodonApiUrl: config.mastodonApiUrl
+        });
+
+        // Validate required configuration
         const requiredVars = [
-            'BLUESKY_USERNAME',
-            'BLUESKY_PASSWORD',
-            'BLUESKY_API_URL',
-            'MASTODON_ACCESS_TOKEN',
-            'MASTODON_API_URL'
+            ['BLUESKY_USERNAME', config.blueskyUsername],
+            ['BLUESKY_PASSWORD', config.blueskyPassword],
+            ['BLUESKY_API_URL', config.blueskyApiUrl],
+            ['MASTODON_ACCESS_TOKEN', config.mastodonAccessToken],
+            ['MASTODON_API_URL', config.mastodonApiUrl]
         ];
 
-        const missingVars = requiredVars.filter(varName => !process.env[varName]);
+        const missingVars = requiredVars
+            .filter(([name, value]) => !value)
+            .map(([name]) => name);
+
         if (missingVars.length > 0) {
             throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
         }
-    }
 
-    return config;
+        // Validate Bluesky username
+        if (!validateBlueskyUsername(config.blueskyUsername)) {
+            const errorMsg = `Invalid Bluesky username format: "${config.blueskyUsername}". ` +
+                'Username should be in the format "handle.bsky.social" or "handle.domain.tld". ' +
+                'Make sure to include the full domain and check for typos.';
+            debug(errorMsg, 'error');
+            throw new Error(errorMsg);
+        }
+
+        return config;
+    } catch (error) {
+        debug(`Error loading configuration: ${error.message}`, 'error');
+        throw error;
+    }
 }
 
 // Global config object
 let CONFIG = null;
 
 // Utility Functions
-function debug(message, level = 'info', data = null) {
-    // Always show errors
-    if (level === 'error') {
-        const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [ERROR] ${message}`);
-        if (data) console.log(data);
-        return;
+function validateBlueskyUsername(username) {
+    if (!username) {
+        debug('Username is empty', 'error');
+        return false;
     }
-
-    // In non-debug mode, only show essential info
-    if (!CONFIG.debug) {
-        if (level === 'essential') {
-            const timestamp = new Date().toISOString();
-            console.log(`[${timestamp}] ${message}`);
-            if (data) console.log(data);
-        }
-        return;
-    }
-
-    // In debug mode, show everything based on debug level
-    if (CONFIG.debugLevel === 'info' && level === 'verbose') return;
-
-    const timestamp = new Date().toISOString();
-    const logLevel = level.toUpperCase();
-    console.log(`[${timestamp}] [${logLevel}] ${message}`);
     
-    if (data && (CONFIG.debugLevel === 'verbose' || level === 'error')) {
-        console.log(data);
+    debug(`Validating Bluesky username: ${username}`, 'verbose');
+    
+    // Remove any leading @ if present
+    username = username.replace(/^@/, '');
+    
+    // Allow any username that contains at least one dot
+    // This covers handle.bsky.social, handle.domain.tld, etc.
+    if (username.includes('.')) {
+        const handle = username.split('.')[0];
+        // Basic handle validation - allow letters, numbers, underscores, and hyphens
+        if (handle.match(/^[a-zA-Z0-9_-]+$/)) {
+            return true;
+        }
     }
+    
+    debug(`Invalid username format: ${username}`, 'error');
+    return false;
 }
 
 function cleanText(text) {
@@ -223,11 +265,19 @@ async function fetchRecentPosts() {
 
         try {
             // Fetch from Mastodon
-            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/home`, {
+            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/public`, {
                 headers: {
-                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`
+                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
+                    'Accept': 'application/json'
                 }
             });
+            
+            if (!mastodonResponse.ok) {
+                const errorData = await mastodonResponse.json();
+                debug('Mastodon API error', 'error', errorData);
+                throw new Error(`Mastodon API error: ${errorData.error || 'Unknown error'}`);
+            }
+            
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {
@@ -296,26 +346,50 @@ async function fetchRecentPosts() {
 
 async function getBlueskyAuth() {
     try {
+        debug('Authenticating with Bluesky...', 'verbose');
+        debug(`Using Bluesky username: ${CONFIG.blueskyUsername}`, 'verbose');
+        
+        // Validate credentials
+        if (!CONFIG.blueskyUsername || !CONFIG.blueskyPassword) {
+            throw new Error('Missing Bluesky credentials');
+        }
+        
+        if (!validateBlueskyUsername(CONFIG.blueskyUsername)) {
+            throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
+        }
+
+        const authData = {
+            "identifier": CONFIG.blueskyUsername,
+            "password": CONFIG.blueskyPassword
+        };
+
+        debug('Sending Bluesky auth request...', 'verbose', authData);
+
         const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
-            body: JSON.stringify({
-                identifier: CONFIG.blueskyUsername,
-                password: CONFIG.blueskyPassword
-            })
+            body: JSON.stringify(authData)
         });
 
+        if (!response.ok) {
+            const errorData = await response.json();
+            debug('Bluesky authentication failed', 'error', errorData);
+            throw new Error(`Bluesky authentication error: ${errorData.message || 'Unknown error'}`);
+        }
+
         const data = await response.json();
-        if (data.error) {
-            debug('Bluesky authentication failed', 'error', data);
+        if (!data || !data.accessJwt) {
+            debug('Bluesky authentication response missing access token', 'error', data);
             return null;
         }
 
+        debug('Successfully authenticated with Bluesky', 'verbose');
         return data.accessJwt;
     } catch (error) {
-        debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
+        debug(`Bluesky authentication error: ${error.message}`, 'error');
         return null;
     }
 }

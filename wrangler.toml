@@ -10,17 +10,17 @@ crons = ["0 */2 * * *"]  # Run every 2 hours
 command = "npm install"
 
 [vars]
-DEBUG_MODE = "false"
-DEBUG_LEVEL = "info"
+DEBUG_MODE = "true"
+DEBUG_LEVEL = "verbose"
 MARKOV_STATE_SIZE = "2"
 MARKOV_MAX_TRIES = "100"
 MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
-BLUESKY_API_URL = "https://bsky.social"
-MASTODON_API_URL = "https://hachyderm.io"
+BLUESKY_API_URL = "https://bsky.social"  # No trailing slash
+MASTODON_API_URL = "https://hachyderm.io"  # No trailing slash
 
-[observability.logs]
-enabled = true
+[env.dev]
+vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
 
 # Secrets that should be set via wrangler
 # wrangler secret put BLUESKY_USERNAME
@@ -29,3 +29,15 @@ enabled = true
 # wrangler secret put BLUESKY_SOURCE_ACCOUNTS
 # wrangler secret put MASTODON_SOURCE_ACCOUNTS
 # wrangler secret put EXCLUDED_WORDS
+
+# Development secrets - these will be loaded from .dev.vars
+# Create a .dev.vars file with these secrets for local development:
+# BLUESKY_USERNAME
+# BLUESKY_PASSWORD
+# MASTODON_ACCESS_TOKEN
+# BLUESKY_SOURCE_ACCOUNTS
+# MASTODON_SOURCE_ACCOUNTS
+# EXCLUDED_WORDS
+
+[observability.logs]
+enabled = true

@@ -14,6 +14,13 @@ export default {
             process.env.CLOUDFLARE_WORKER = 'true';
             Object.assign(process.env, env);
 
+            // Log environment state
+            debug('Environment variables in fetch:', 'verbose', {
+                CLOUDFLARE_WORKER: process.env.CLOUDFLARE_WORKER,
+                DEBUG_MODE: process.env.DEBUG_MODE,
+                DEBUG_LEVEL: process.env.DEBUG_LEVEL
+            });
+
             // Only allow POST requests to trigger the bot
             if (request.method === 'POST') {
                 await main();
@@ -31,15 +38,21 @@ export default {
     // Handle scheduled events
     async scheduled(event, env, ctx) {
         try {
-            // Set environment variables from worker environment
+            // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
             Object.assign(process.env, env);
 
+            // Log environment state
+            debug('Environment variables in scheduled:', 'verbose', {
+                CLOUDFLARE_WORKER: process.env.CLOUDFLARE_WORKER,
+                DEBUG_MODE: process.env.DEBUG_MODE,
+                DEBUG_LEVEL: process.env.DEBUG_LEVEL
+            });
+
             await main();
-            return new Response('Bot execution completed successfully', { status: 200 });
         } catch (error) {
-            console.error('Error executing bot:', error);
-            return new Response('Bot execution failed: ' + error.message, { status: 500 });
+            console.error('Error in scheduled execution:', error);
+            throw error;
         }
-    },
+    }
 };
