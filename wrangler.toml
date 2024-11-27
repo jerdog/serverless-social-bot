@@ -1,6 +1,6 @@
 name = "serverless-social-bot"
 main = "worker.js"
-compatibility_date = "2024-09-23"
+compatibility_date = "2024-11-11"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
@@ -10,7 +10,7 @@ crons = ["0 */2 * * *"]  # Run every 2 hours
 command = "npm install"
 
 [vars]
-DEBUG_MODE = "true"
+DEBUG_MODE = "true"  # change this to start publishing live
 DEBUG_LEVEL = "verbose"
 MARKOV_STATE_SIZE = "2"
 MARKOV_MAX_TRIES = "100"
