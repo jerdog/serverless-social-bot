@@ -1,33 +1,68 @@
 // Essential imports only
-import 'dotenv/config';
 import fetch from 'node-fetch';
-import { promises as fs } from 'fs';
 
-// Configuration
-const CONFIG = {
-    debug: process.env.DEBUG_MODE === 'true',
-    debugLevel: process.env.DEBUG_LEVEL || 'info',
-    
-    // Markov Chain settings
-    markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-    markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-    markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-    markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
-    
-    // Content filtering
-    excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
-    
-    // Bluesky settings
-    blueskyUsername: process.env.BLUESKY_USERNAME,
-    blueskyPassword: process.env.BLUESKY_PASSWORD,
-    blueskyApiUrl: process.env.BLUESKY_API_URL,
-    blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-    
-    // Mastodon settings
-    mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-    mastodonApiUrl: process.env.MASTODON_API_URL,
-    mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
-};
+// HTML entity decoding function (since we can't use html-entities in Workers)
+function decodeHtmlEntities(text) {
+    const entities = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&nbsp;': ' '
+    };
+    return text.replace(/&[^;]+;/g, entity => entities[entity] || entity);
+}
+
+// Configuration loader
+function loadConfig() {
+    // Load configuration from environment variables
+    const config = {
+        debug: process.env.DEBUG_MODE === 'true',
+        debugLevel: process.env.DEBUG_LEVEL || 'info',
+        
+        // Markov Chain settings
+        markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
+        markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
+        markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
+        markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
+        
+        // Content filtering
+        excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
+        
+        // Bluesky settings
+        blueskyUsername: process.env.BLUESKY_USERNAME,
+        blueskyPassword: process.env.BLUESKY_PASSWORD,
+        blueskyApiUrl: process.env.BLUESKY_API_URL,
+        blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
+        
+        // Mastodon settings
+        mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
+        mastodonApiUrl: process.env.MASTODON_API_URL,
+        mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+    };
+
+    // Validate required configuration in local development
+    if (typeof process.env.CLOUDFLARE_WORKER === 'undefined') {
+        const requiredVars = [
+            'BLUESKY_USERNAME',
+            'BLUESKY_PASSWORD',
+            'BLUESKY_API_URL',
+            'MASTODON_ACCESS_TOKEN',
+            'MASTODON_API_URL'
+        ];
+
+        const missingVars = requiredVars.filter(varName => !process.env[varName]);
+        if (missingVars.length > 0) {
+            throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+        }
+    }
+
+    return config;
+}
+
+// Global config object
+let CONFIG = null;
 
 // Utility Functions
 function debug(message, level = 'info', data = null) {
@@ -59,24 +94,6 @@ function debug(message, level = 'info', data = null) {
     if (data && (CONFIG.debugLevel === 'verbose' || level === 'error')) {
         console.log(data);
     }
-}
-
-function decodeHtmlEntities(text) {
-    const entities = {
-        '&amp;': '&',
-        '&lt;': '<',
-        '&gt;': '>',
-        '&quot;': '"',
-        '&#39;': "'",
-        '&apos;': "'",
-        '&#x2F;': '/',
-        '&#x2f;': '/',
-        '&#x5C;': '\\',
-        '&#x5c;': '\\',
-        '&nbsp;': ' '
-    };
-    
-    return text.replace(/&[#\w]+;/g, entity => entities[entity] || entity);
 }
 
 function cleanText(text) {
@@ -188,57 +205,9 @@ class MarkovChain {
 
 // Content Management
 async function fetchTextContent() {
-    const textData = await fs.readFile('tweets.txt', 'utf8');
-    return textData.split('\n').map(cleanText).filter(text => text.length > 0);
-}
-
-async function getBlueskyAuth() {
-    try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                identifier: CONFIG.blueskyUsername,
-                password: CONFIG.blueskyPassword
-            })
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug('Bluesky authentication failed', 'error', data);
-            return null;
-        }
-
-        return data.accessJwt;
-    } catch (error) {
-        debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
-        return null;
-    }
-}
-
-async function getBlueskyDid() {
-    try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
-            return null;
-        }
-
-        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
-        return data.did;
-    } catch (error) {
-        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
-        return null;
-    }
+    // In worker environment, we'll fetch content from the APIs directly
+    const posts = await fetchRecentPosts();
+    return posts.map(cleanText).filter(text => text.length > 0);
 }
 
 async function fetchRecentPosts() {
@@ -322,6 +291,55 @@ async function fetchRecentPosts() {
     } catch (error) {
         debug(`Error in fetchRecentPosts: ${error.message}`, 'error');
         return [];
+    }
+}
+
+async function getBlueskyAuth() {
+    try {
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                identifier: CONFIG.blueskyUsername,
+                password: CONFIG.blueskyPassword
+            })
+        });
+
+        const data = await response.json();
+        if (data.error) {
+            debug('Bluesky authentication failed', 'error', data);
+            return null;
+        }
+
+        return data.accessJwt;
+    } catch (error) {
+        debug(`Error getting Bluesky auth token: ${error.message}`, 'error');
+        return null;
+    }
+}
+
+async function getBlueskyDid() {
+    try {
+        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (data.error) {
+            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
+            return null;
+        }
+
+        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
+        return data.did;
+    } catch (error) {
+        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
+        return null;
     }
 }
 
@@ -465,6 +483,9 @@ async function postToSocialMedia(content) {
 // Main Execution
 async function main() {
     try {
+        // Load configuration
+        CONFIG = await loadConfig();
+        
         debug('Bot started', 'essential');
         
         if (CONFIG.excludedWords.length > 0) {
@@ -480,51 +501,27 @@ async function main() {
 
         debug('Random check passed - proceeding with generation (30% probability)', 'essential');
         
-        const fileContent = await fetchTextContent();
-        debug(`Loaded ${fileContent.length} lines from text file`, 'info');
-        
-        const recentPosts = await fetchRecentPosts();
-        debug(`Total posts retrieved: ${recentPosts.length}`, 'essential');
-        
-        const allContent = [...fileContent, ...recentPosts];
-        debug(`Total content items for processing: ${allContent.length}`, 'info');
-        
-        const generatedPost = await generatePost(allContent);
-        
-        debug('Generated post:', 'essential');
-        debug('---Generated Post Start---', 'essential');
-        debug(generatedPost, 'essential');
-        debug('---Generated Post End---', 'essential');
-        
-        if (!CONFIG.debug) {
-            debug('Posting to social media platforms', 'essential');
-            await postToSocialMedia(generatedPost);
-            debug('Successfully posted to all platforms', 'essential');
-        } else {
-            debug('Debug mode enabled - skipping actual posting', 'info');
+        // Get source content
+        const sourceContent = await fetchTextContent();
+        if (!sourceContent || sourceContent.length === 0) {
+            debug('No source content available', 'error');
+            return;
         }
-        
+
+        // Generate post
+        const post = await generatePost(sourceContent);
+        if (!post) {
+            debug('Failed to generate valid post', 'error');
+            return;
+        }
+
+        // Post to social media
+        await postToSocialMedia(post);
     } catch (error) {
         debug(`Error in main execution: ${error.message}`, 'error');
         throw error;
     }
 }
 
-// Start the bot if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-    main().catch(error => {
-        console.error('Fatal error:', error);
-        process.exit(1);
-    });
-}
-
-// Error handling for the main process
-process.on('unhandledRejection', (error) => {
-    debug(`Unhandled rejection: ${error.message}`, 'error');
-    process.exit(1);
-});
-
-process.on('uncaughtException', (error) => {
-    debug(`Uncaught exception: ${error.message}`, 'error');
-    process.exit(1);
-});
+// Export for worker
+export { debug, main };

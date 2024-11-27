@@ -1,0 +1,28 @@
+name = "serverless-social-bot"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["0 */2 * * *"]  # Run every 2 hours
+
+[build]
+command = "npm install"
+
+[vars]
+DEBUG_MODE = "false"
+DEBUG_LEVEL = "info"
+MARKOV_STATE_SIZE = "2"
+MARKOV_MAX_TRIES = "100"
+MARKOV_MIN_CHARS = "100"
+MARKOV_MAX_CHARS = "280"
+
+# Secrets that should be set via wrangler
+# wrangler secret put BLUESKY_USERNAME
+# wrangler secret put BLUESKY_PASSWORD
+# wrangler secret put BLUESKY_API_URL
+# wrangler secret put MASTODON_ACCESS_TOKEN
+# wrangler secret put MASTODON_API_URL
+# wrangler secret put BLUESKY_SOURCE_ACCOUNTS
+# wrangler secret put MASTODON_SOURCE_ACCOUNTS
+# wrangler secret put EXCLUDED_WORDS

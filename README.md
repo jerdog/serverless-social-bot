@@ -100,66 +100,100 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 
 Note: The bot has a 30% chance of generating and posting content each time it runs. This randomness helps create a more natural posting pattern and prevents overwhelming your social media feeds. When the script runs but doesn't post, it will log a message indicating the random check failed.
 
-## Environment Variables
+## Deployment
 
-Copy `.env-example` to `.env` and configure the following variables:
+### Local Development
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-### Authentication
+2. Run in debug mode to test generation:
+   ```bash
+   npm start
+   ```
 
-#### Bluesky
-- `BLUESKY_USERNAME`: Your Bluesky handle (e.g., "username.bsky.social")
+### Cloudflare Workers Deployment
+
+The bot can be deployed as a Cloudflare Worker that runs automatically every 2 hours.
+
+1. Install Cloudflare Workers CLI:
+   ```bash
+   npm install
+   ```
+
+2. Authenticate with Cloudflare:
+   ```bash
+   npx wrangler login
+   ```
+
+3. Add your environment variables to Cloudflare:
+   ```bash
+   npx wrangler secret put BLUESKY_USERNAME
+   npx wrangler secret put BLUESKY_PASSWORD
+   npx wrangler secret put MASTODON_ACCESS_TOKEN
+   # Repeat for other environment variables
+   ```
+
+4. Deploy to Cloudflare Workers:
+   ```bash
+   npm run deploy
+   ```
+
+The worker will automatically run every 2 hours. You can monitor its execution in the Cloudflare Dashboard under Workers & Pages > your-worker > Logs.
+
+Note: The 30% random posting chance is still active in the worker, so it will only actually post about once every 6-7 hours on average.
+
+## Configuration
+
+### Environment Variables (.env)
+
+Only sensitive information and user-specific settings should be stored in `.env`:
+
+#### Authentication
+- `BLUESKY_USERNAME`: Your Bluesky handle
 - `BLUESKY_PASSWORD`: Your Bluesky app password
-- `BLUESKY_API_URL`: Bluesky API URL (default: "https://bsky.social")
-- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from (e.g., `["@user1.bsky.social"]`)
+- `BLUESKY_SOURCE_ACCOUNTS`: Array of Bluesky accounts to learn from
 
-#### Mastodon
 - `MASTODON_ACCESS_TOKEN`: Your Mastodon access token
-- `MASTODON_API_URL`: Your Mastodon instance API URL
-- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from (e.g., `["@user@instance.social"]`)
-
-### Content Generation
-
-#### Markov Chain Settings
-- `MARKOV_STATE_SIZE`: Number of words to consider for next word prediction (default: 2)
-- `MARKOV_MAX_TRIES`: Maximum attempts to generate valid content (default: 100)
-- `MARKOV_MIN_CHARS`: Minimum characters in generated post (default: 100)
-- `MARKOV_MAX_CHARS`: Maximum characters in generated post (default: 280)
+- `MASTODON_SOURCE_ACCOUNTS`: Array of Mastodon accounts to learn from
 
 #### Content Filtering
-- `EXCLUDED_WORDS`: Array of words to exclude from generated posts (e.g., `["word1","word2"]`)
-  - Case-insensitive matching
-  - Matches whole words only
-  - Optional, defaults to empty array
+- `EXCLUDED_WORDS`: Array of words to exclude from generated posts
 
-### Debug Settings
-- `DEBUG_MODE`: Enable debug output (true/false)
-- `DEBUG_LEVEL`: Debug verbosity level ("info"/"verbose"/"essential")
+### Worker Configuration (wrangler.toml)
 
-Example `.env` file:
-```env
-# Bluesky Credentials
-BLUESKY_USERNAME="username.bsky.social"
-BLUESKY_PASSWORD="app-password"
-BLUESKY_API_URL="https://bsky.social"
-BLUESKY_SOURCE_ACCOUNTS=["@user1.bsky.social"]
+Non-sensitive configuration is stored in `wrangler.toml`:
 
-# Mastodon Credentials
-MASTODON_ACCESS_TOKEN="your-access-token"
-MASTODON_API_URL="https://instance.social"
-MASTODON_SOURCE_ACCOUNTS=["@user@instance.social"]
+#### API Endpoints
+- `BLUESKY_API_URL`: Bluesky API URL (default: "https://bsky.social")
+- `MASTODON_API_URL`: Mastodon instance API URL
 
-# Markov Chain Configuration
-MARKOV_STATE_SIZE=2
-MARKOV_MAX_TRIES=100
-MARKOV_MIN_CHARS=100
-MARKOV_MAX_CHARS=280
+#### Markov Chain Settings
+- `MARKOV_STATE_SIZE`: Word context size (default: 2)
+- `MARKOV_MAX_TRIES`: Generation attempts (default: 100)
+- `MARKOV_MIN_CHARS`: Minimum post length (default: 100)
+- `MARKOV_MAX_CHARS`: Maximum post length (default: 280)
 
-# Content Filtering
-EXCLUDED_WORDS=["word1","word2","word3"]
+#### Debug Settings
+- `DEBUG_MODE`: Enable debug output (default: false)
+- `DEBUG_LEVEL`: Debug verbosity level (default: "info")
 
-# Debug Settings
-DEBUG_MODE=false
-DEBUG_LEVEL="info"
+### Deployment
+
+When deploying to Cloudflare Workers, only add sensitive variables as secrets:
+
+```bash
+# Add sensitive variables as secrets
+npx wrangler secret put BLUESKY_USERNAME
+npx wrangler secret put BLUESKY_PASSWORD
+npx wrangler secret put MASTODON_ACCESS_TOKEN
+npx wrangler secret put BLUESKY_SOURCE_ACCOUNTS
+npx wrangler secret put MASTODON_SOURCE_ACCOUNTS
+npx wrangler secret put EXCLUDED_WORDS
+
+# Other configuration is already in wrangler.toml
+npm run deploy
 ```
 
 ## Security

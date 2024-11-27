@@ -1,16 +1,18 @@
 {
   "name": "serverless-social-bot",
   "version": "1.0.0",
+  "description": "A serverless social media bot that generates content using Markov chains",
+  "type": "module",
   "main": "bot.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node -r dotenv/config bot.js",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
   },
-  "author": "Jeremy Meiss",
-  "license": "MIT",
-  "type": "module",
-  "description": "",
   "dependencies": {
-    "dotenv": "^16.4.5",
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
   }
 }
