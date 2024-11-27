@@ -1,20 +1,18 @@
 # Bluesky Configuration
-# Format: username.bsky.social (or username.domain.tld)
-BLUESKY_USERNAME=mybot.bsky.social
-# App Password from Bluesky Settings -> App Passwords
-BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
+BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
 
 # Mastodon Configuration
-# Generate from your Mastodon instance -> Preferences -> Development -> New Application
-MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
+MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
 # Source Accounts Configuration
-# JSON array of handles to source content from
-# Bluesky format: @handle.bsky.social
-BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
-# Mastodon format: @user@instance.tld
-MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
 
 # Content Filtering
-# JSON array of words to exclude from generated content
 EXCLUDED_WORDS=["word1", "word2", "word3"]
+
+# Debug Configuration (Optional)
+DEBUG_MODE=true
+DEBUG_LEVEL=verbose  # or "info"
