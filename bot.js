@@ -1,7 +1,7 @@
 // Essential imports only
 import fetch from 'node-fetch';
 
-// HTML entity decoding function (since we can't use html-entities in Workers)
+// HTML processing functions
 function decodeHtmlEntities(text) {
     const entities = {
         '&amp;': '&',
@@ -9,9 +9,44 @@ function decodeHtmlEntities(text) {
         '&gt;': '>',
         '&quot;': '"',
         '&#39;': "'",
-        '&nbsp;': ' '
+        '&nbsp;': ' ',
+        '&ndash;': '–',
+        '&mdash;': '—',
+        '&hellip;': '…',
+        '&trade;': '™',
+        '&copy;': '©',
+        '&reg;': '®',
+        '&deg;': '°',
+        '&plusmn;': '±',
+        '&para;': '¶',
+        '&sect;': '§',
+        '&ldquo;': '"',
+        '&rdquo;': '"',
+        '&lsquo;': ''',
+        '&rsquo;': ''',
+        '&laquo;': '«',
+        '&raquo;': '»',
+        '&times;': '×',
+        '&divide;': '÷',
+        '&cent;': '¢',
+        '&pound;': '£',
+        '&euro;': '€',
+        '&bull;': '•'
     };
-    return text.replace(/&[^;]+;/g, entity => entities[entity] || entity);
+    return text.replace(/&[^;]+;/g, entity => entities[entity] || '');
+}
+
+function stripHtmlTags(text) {
+    // First replace common block elements with space for better sentence separation
+    text = text
+        .replace(/<\/(p|div|br|h[1-6]|li)>/gi, ' ')
+        .replace(/<(p|div|br|h[1-6]|li)[^>]*>/gi, ' ');
+    
+    // Then remove all remaining HTML tags
+    text = text.replace(/<[^>]+>/g, '');
+    
+    // Clean up excessive whitespace
+    return text.replace(/\s+/g, ' ').trim();
 }
 
 // Utility Functions
@@ -141,7 +176,10 @@ function validateBlueskyUsername(username) {
 function cleanText(text) {
     if (!text || typeof text !== 'string') return '';
 
-    // First decode HTML entities
+    // First strip HTML tags
+    text = stripHtmlTags(text);
+
+    // Then decode HTML entities
     text = decodeHtmlEntities(text);
 
     // Basic cleaning
@@ -161,6 +199,17 @@ function cleanText(text) {
         const excludedWordsRegex = new RegExp(`\\b(${CONFIG.excludedWords.join('|')})\\b`, 'gi');
         text = text.replace(excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
     }
+
+    // Final cleanup of any remaining special characters
+    text = text
+        // Replace smart quotes with regular quotes
+        .replace(/[""]/g, '"')
+        .replace(/['']/g, "'")
+        // Remove any remaining control characters
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+        // Clean up multiple spaces again
+        .replace(/\s+/g, ' ')
+        .trim();
 
     return text;
 }
