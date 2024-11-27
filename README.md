@@ -21,9 +21,14 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - **Content Processing**
   - Removes URLs and @mentions
   - Preserves hashtags
-  - Converts HTML entities to actual characters (e.g., &amp; → &)
+  - Advanced HTML processing:
+    - Intelligent HTML tag handling
+    - Block element preservation (p, div, headers, lists)
+    - Comprehensive HTML entity conversion
+    - Special character normalization
   - Filters empty or invalid content
-  - Maintains natural text flow
+  - Maintains natural text flow and spacing
+  - Content filtering with excluded words
 
 - **Smart Posting**
   - 30% random chance of posting on each run
@@ -71,6 +76,7 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 
    # Mastodon Configuration
    MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+   MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
 
    # Source Accounts Configuration
    BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
@@ -78,6 +84,10 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 
    # Content Filtering
    EXCLUDED_WORDS=["word1", "word2", "word3"]
+
+   # Debug Configuration (Optional)
+   DEBUG_MODE=true
+   DEBUG_LEVEL=verbose  # or "info"
    ```
 
 ## Usage
@@ -138,23 +148,56 @@ Store sensitive information and user-specific settings in `.dev.vars`:
 - `MASTODON_SOURCE_ACCOUNTS`: JSON array of Mastodon accounts to learn from
 - `EXCLUDED_WORDS`: JSON array of words to exclude from generated posts
 
+For local development, you can use the provided `.dev.vars.example` as a template:
+
+```env
+# Bluesky Configuration
+BLUESKY_USERNAME=mybot.bsky.social
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
+
+# Mastodon Configuration
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here
+MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
+
+# Source Accounts Configuration
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"]
+
+# Content Filtering
+EXCLUDED_WORDS=["word1", "word2", "word3"]
+
+# Debug Configuration (Optional)
+DEBUG_MODE=true
+DEBUG_LEVEL=verbose  # or "info"
+```
+
 ### Worker Configuration (wrangler.toml)
 
 Non-sensitive configuration is stored in `wrangler.toml`:
 
-#### API Endpoints
-- `BLUESKY_API_URL`: Bluesky API URL (default: "https://bsky.social")
-- `MASTODON_API_URL`: Mastodon instance API URL
+```toml
+name = "serverless-social-bot"
+main = "worker.js"
+compatibility_date = "2023-01-01"
 
-#### Markov Chain Settings
-- `MARKOV_STATE_SIZE`: Word context size (default: 2)
-- `MARKOV_MAX_TRIES`: Generation attempts (default: 100)
-- `MARKOV_MIN_CHARS`: Minimum post length (default: 100)
-- `MARKOV_MAX_CHARS`: Maximum post length (default: 280)
+[triggers]
+crons = ["0 */2 * * *"]  # Run every 2 hours
 
-#### Debug Settings
-- `DEBUG_MODE`: Enable debug output (default: false)
-- `DEBUG_LEVEL`: Debug verbosity level (default: "info")
+[vars]
+# API Endpoints
+BLUESKY_API_URL = "https://bsky.social"
+MASTODON_API_URL = "https://mastodon.social"
+
+# Markov Chain Settings
+MARKOV_STATE_SIZE = 2
+MARKOV_MAX_TRIES = 100
+MARKOV_MIN_CHARS = 100
+MARKOV_MAX_CHARS = 280
+
+# Debug Settings
+DEBUG_MODE = false
+DEBUG_LEVEL = "info"
+```
 
 ## Security Best Practices
 
