@@ -263,7 +263,8 @@ class MarkovChain {
     }
 
     async generate({ minChars = 100, maxChars = 280, maxTries = 100 } = {}) {
-        for (let attempt = 0; attempt < maxTries; attempt++) {
+        let attempt = 0;
+        while (attempt < maxTries) {
             try {
                 const result = await this._generateOnce();
                 if (result.length >= minChars && result.length <= maxChars) {
@@ -274,8 +275,8 @@ class MarkovChain {
                     throw error;
                 }
                 // Continue trying if it's just a generation issue
-                continue;
             }
+            attempt++;
         }
         throw new Error('Failed to generate valid text within constraints');
     }
@@ -350,7 +351,7 @@ async function fetchRecentPosts() {
                 debug('Mastodon API error', 'error', errorData);
                 throw new Error(`Mastodon API error: ${errorData.error || 'Unknown error'}`);
             }
-            
+
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {

@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from '@jest/globals';
 import { generatePost, loadConfig } from '../bot.js';
 import dotenv from 'dotenv';
 import path from 'path';
