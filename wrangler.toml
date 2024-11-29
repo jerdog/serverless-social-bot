@@ -1,6 +1,6 @@
 name = "serverless-social-bot"
 main = "worker.js"
-compatibility_date = "2024-11-11"
+compatibility_date = "2024-11-06"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]

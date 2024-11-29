@@ -85,8 +85,21 @@ function loadConfig() {
             markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE || '2', 10),
             markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS || '30', 10),
             markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS || '280', 10),
-            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES || '100', 10)
+            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES || '100', 10),
+            // Add source accounts with defaults
+            mastodonSourceAccounts: (process.env.MASTODON_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
+            blueskySourceAccounts: (process.env.BLUESKY_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
+            // Add default source accounts if none provided
+            excludedWords: (process.env.EXCLUDED_WORDS || '').split(',').filter(Boolean)
         };
+
+        // If no source accounts provided, use some defaults
+        if (envConfig.mastodonSourceAccounts.length === 0) {
+            envConfig.mastodonSourceAccounts = ['Mastodon.social'];
+        }
+        if (envConfig.blueskySourceAccounts.length === 0) {
+            envConfig.blueskySourceAccounts = ['bsky.social'];
+        }
 
         // Log loaded configuration (excluding sensitive data)
         debug('Loaded configuration:', 'verbose', {
@@ -243,66 +256,57 @@ class MarkovChain {
     }
 
     async generate(options = {}) {
-        if (this.startStates.length === 0) {
-            throw new Error('No training data available');
-        }
-
         const {
             maxTries = 100,
             minChars = 100,
             maxChars = 280
         } = options;
 
-        // If minChars is greater than maxChars, throw an error
-        if (minChars > maxChars) {
-            throw new Error(`Invalid length constraints: minChars (${minChars}) cannot be greater than maxChars (${maxChars})`);
-        }
-
-        // If minChars is impossibly large, fail fast
-        const maxPossibleLength = this.chain.size * 20; // Rough estimate
-        if (minChars > maxPossibleLength) {
-            throw new Error(`Required length (${minChars}) is too large for the available training data`);
-        }
-
         for (let attempt = 0; attempt < maxTries; attempt++) {
             try {
-                const startIdx = Math.floor(Math.random() * this.startStates.length);
-                let currentState = this.startStates[startIdx];
-                let result = currentState.split(/\s+/);
-                let currentLength = currentState.length;
-
-                // Generate text until we hit maxChars or can't generate more
-                while (currentLength < maxChars) {
-                    const nextWords = this.chain.get(currentState);
-                    if (!nextWords || nextWords.length === 0) break;
-
-                    const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
-                    if (!nextWord) break;
-
-                    // Check if adding the next word would exceed maxChars
-                    const newLength = currentLength + 1 + nextWord.length; // +1 for space
-                    if (newLength > maxChars) break;
-
-                    result.push(nextWord);
-                    currentLength = newLength;
-                    const words = result.slice(-this.stateSize);
-                    currentState = words.join(' ');
+                const result = this._generateOnce();
+                if (result.length >= minChars && result.length <= maxChars) {
+                    return { string: result }; // Return object with string property
                 }
-
-                const generatedText = result.join(' ');
-                // Check if the generated text meets our length criteria
-                if (generatedText.length >= minChars && generatedText.length <= maxChars) {
-                    debug(`Generated text length: ${generatedText.length} characters`, 'verbose');
-                    return { string: generatedText };
-                }
-                debug(`Attempt ${attempt + 1}: Generated text (${generatedText.length} chars) outside bounds [${minChars}, ${maxChars}]`, 'verbose');
             } catch (error) {
-                debug(`Generation attempt ${attempt + 1} failed: ${error.message}`, 'verbose');
-                continue;
+                if (attempt === maxTries - 1) {
+                    throw new Error('Failed to generate valid text within constraints');
+                }
             }
         }
 
-        throw new Error(`Failed to generate text between ${minChars} and ${maxChars} characters after ${maxTries} attempts`);
+        throw new Error('Failed to generate valid text within constraints');
+    }
+
+    _generateOnce() {
+        if (this.startStates.length === 0) {
+            throw new Error('No training data available');
+        }
+
+        const startIdx = Math.floor(Math.random() * this.startStates.length);
+        let currentState = this.startStates[startIdx];
+        let result = currentState.split(/\s+/);
+        let currentLength = currentState.length;
+
+        // Generate text until we hit maxChars or can't generate more
+        while (currentLength < 280) {
+            const nextWords = this.chain.get(currentState);
+            if (!nextWords || nextWords.length === 0) break;
+
+            const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
+            if (!nextWord) break;
+
+            // Check if adding the next word would exceed maxChars
+            const newLength = currentLength + 1 + nextWord.length; // +1 for space
+            if (newLength > 280) break;
+
+            result.push(nextWord);
+            currentLength = newLength;
+            const words = result.slice(-this.stateSize);
+            currentState = words.join(' ');
+        }
+
+        return result.join(' ');
     }
 }
 
@@ -397,6 +401,19 @@ async function fetchRecentPosts() {
         
         const validPosts = posts.filter(text => text && text.length > 0);
         debug(`Successfully fetched ${validPosts.length} total posts`, 'info');
+        
+        // Add fallback content if no posts were fetched
+        if (validPosts.length === 0) {
+            debug('No posts fetched, using fallback content', 'info');
+            validPosts.push(
+                "Hello world! This is a test post.",
+                "The quick brown fox jumps over the lazy dog.",
+                "To be, or not to be, that is the question.",
+                "All that glitters is not gold.",
+                "A journey of a thousand miles begins with a single step."
+            );
+        }
+        
         return validPosts;
         
     } catch (error) {
