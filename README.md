@@ -146,40 +146,6 @@ The worker will automatically run every 2 hours. You can monitor its execution i
 
 Note: The 30% random posting chance is still active in the worker, so it will only actually post about once every 6-7 hours on average.
 
-## Releasing
-
-To release a new version:
-
-1. Ensure all changes are committed and tests pass:
-```bash
-git status
-npm test
-```
-
-2. Update the version (this will create a git tag):
-```bash
-npm version patch  # for bug fixes
-npm version minor  # for new features
-npm version major  # for breaking changes
-```
-
-3. Push changes and tags:
-```bash
-git push && git push --tags
-```
-
-4. Create a release on GitHub:
-   - Go to [Releases](https://github.com/jerdog/serverless-social-bot/releases)
-   - Click "Create a new release"
-   - Select the tag you just pushed
-   - Add release notes
-   - Click "Publish release"
-
-The GitHub Action will automatically:
-- Run tests
-- Publish to npm (if on main branch)
-- Deploy to Cloudflare Workers (if on main branch)
-
 ## Configuration
 
 ### Development Variables (.dev.vars)

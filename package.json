@@ -39,7 +39,10 @@
     "prepublishOnly": "npm test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "build": "echo 'No build step required'"
+    "build": "echo 'No build step required'",
+    "release:patch": "./scripts/release.sh patch",
+    "release:minor": "./scripts/release.sh minor",
+    "release:major": "./scripts/release.sh major"
   },
   "jest": {
     "transform": {},
