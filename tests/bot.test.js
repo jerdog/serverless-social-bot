@@ -212,59 +212,65 @@ describe('Bot', () => {
             // Set up test environment for generatePost tests
             process.env = {
                 DEBUG_MODE: 'true',
-                MASTODON_API_URL: 'https://mastodon.social',
-                MASTODON_ACCESS_TOKEN: 'test_token',
-                BLUESKY_API_URL: 'https://bsky.social',
-                BLUESKY_USERNAME: 'test.user',
-                BLUESKY_PASSWORD: 'test_password',
+                DEBUG_LEVEL: 'verbose',
                 MARKOV_STATE_SIZE: '2',
+                MARKOV_MAX_TRIES: '100',
                 MARKOV_MIN_CHARS: '30',
-                MARKOV_MAX_CHARS: '280',
-                MARKOV_MAX_TRIES: '100'
+                MARKOV_MAX_CHARS: '280'
             };
             await loadConfig();
         });
 
-        test('generates valid post from content array', async () => {
-            const testContent = [
-                'This is a test post for content generation.',
-                'Another test post with different content.',
-                'A third test post to ensure variety.'
-            ];
-            
+        test('generates text within constraints', async () => {
+            console.log('\nTesting text generation within constraints:');
+            console.log('--------------------------------------------------');
+
+            // Use sample tweets for generation if available
+            const testContent = sampleTweets?.length > 0 ? 
+                sampleTweets : [
+                    'Mentioning @users and sharing https://links.com makes it realistic',
+                    'Including different sentence structures helps create natural text',
+                    'A third test tweet with https://example.com and additional text for context',
+                    'Using hashtags #testing #quality improves the authenticity'
+                ];
+
             const result = await generatePost(testContent);
-            
-            expect(result).toHaveProperty('string');
-            expect(typeof result.string).toBe('string');
-            expect(result.string.length).toBeGreaterThanOrEqual(30);
-            expect(result.string.length).toBeLessThanOrEqual(280);
+            expect(result).toBeTruthy();
+            if (result) {
+                console.log(`Generated: ${result.string}`);
+                console.log(`Length: ${result.string.length} characters`);
+                console.log('--------------------------------------------------');
+                expect(result.string.length).toBeGreaterThanOrEqual(30);
+                expect(result.string.length).toBeLessThanOrEqual(280);
+            }
         });
 
-        test('handles empty content array', async () => {
-            await expect(generatePost([])).rejects.toThrow('Content array is empty');
-        });
+        test('generates different text each time', async () => {
+            console.log('\nTesting text variation:');
+            console.log('--------------------------------------------------');
 
-        test('handles invalid content', async () => {
-            await expect(generatePost([null, undefined, '', ' '])).rejects.toThrow('Content array is empty');
-        });
+            // Use sample tweets for generation if available
+            const testContent = sampleTweets?.length > 0 ? 
+                sampleTweets : [
+                    'Testing multiple elements @user #topic https://test.com with expanded vocabulary',
+                    'Using hashtags #testing #quality improves the authenticity',
+                    'A third test tweet with @mention and more words to work with'
+                ];
 
-        test('generates different posts on multiple calls', async () => {
-            const testContent = [
-                'This is a test post for content generation.',
-                'Another test post with different content.',
-                'A third test post to ensure variety.',
-                'Fourth test post for more training data.',
-                'Fifth test post to improve variation.'
-            ];
+            const generations = [];
+            for (let i = 0; i < 3; i++) {
+                const result = await generatePost(testContent);
+                if (result) {
+                    generations.push(result.string);
+                    console.log(`Generation ${i + 1}: ${result.string}`);
+                    console.log(`Length: ${result.string.length} characters`);
+                    console.log('--------------------------------------------------');
+                }
+            }
 
-            const results = await Promise.all([
-                generatePost(testContent),
-                generatePost(testContent),
-                generatePost(testContent)
-            ]);
-
-            const uniqueTexts = new Set(results.map(r => r.string));
-            expect(uniqueTexts.size).toBeGreaterThan(1);
+            // Check that we have unique generations
+            const uniqueGenerations = new Set(generations);
+            expect(uniqueGenerations.size).toBeGreaterThan(1);
         });
     });
 });

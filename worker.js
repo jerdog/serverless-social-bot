@@ -1,6 +1,6 @@
 // Import only the necessary functions
 import { main, debug } from './bot.js';
-import { getSourceTweets, uploadSourceTweetsFromText, getTweetCount } from './kv.js';
+import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
