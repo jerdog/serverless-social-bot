@@ -1,4 +1,4 @@
-import { jest, describe, test, beforeEach, expect } from '@jest/globals';
+import { describe, test, beforeEach, expect } from '@jest/globals';
 import { MarkovChain } from '../bot.js';
 import fs from 'fs';
 import path from 'path';
@@ -107,7 +107,7 @@ describe('MarkovChain', () => {
         expect(generated.string.length).toBeLessThanOrEqual(options.maxChars);
 
         // Verify the text contains common Twitter elements
-        const twitterElements = /(https?:\/\/\S+|\@\w+|\#\w+)/;
+        const twitterElements = /(https?:\/\/\S+|@\w+|#\w+)/;
         expect(generated.string).toMatch(twitterElements);
     });
 });

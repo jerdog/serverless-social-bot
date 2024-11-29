@@ -1,5 +1,5 @@
 // Import only the necessary functions
-import { debug, main } from './bot.js';
+import { debug, generatePost, postToMastodon, postToBluesky, main } from './bot.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -8,7 +8,7 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
 
 export default {
     // Handle HTTP requests
-    async fetch(request, env, ctx) {
+    async fetch(request, env, _ctx) {
         try {
             // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
@@ -36,7 +36,7 @@ export default {
     },
 
     // Handle scheduled events
-    async scheduled(event, env, ctx) {
+    async scheduled(event, env, _ctx) {
         try {
             // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
