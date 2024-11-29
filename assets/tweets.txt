@@ -1,0 +1,10 @@
+This is a test tweet with #hashtag and some interesting content
+Another test tweet with @mention and more words to work with
+A third test tweet with https://example.com and additional text for context
+Testing multiple elements @user #topic https://test.com with expanded vocabulary
+Adding more sample tweets to improve Markov chain generation quality
+The more varied content we have, the better the output will be
+Including different sentence structures helps create natural text
+Using hashtags #testing #quality improves the authenticity
+Mentioning @users and sharing https://links.com makes it realistic
+Final test tweet with good length and natural language patterns

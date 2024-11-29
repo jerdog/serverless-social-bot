@@ -99,7 +99,7 @@ worker/
 *~
 
 # Project specific
-tweets.txt
+#tweets.txt
 .secrets
 .github/workflows/release.event.json
 
