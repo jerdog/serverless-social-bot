@@ -1,5 +1,12 @@
 # Serverless Social Media Bot
 
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jerdog/serverless-social-bot)
+[![Node Version](https://img.shields.io/node/v/serverless-social-bot)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Last Commit](https://img.shields.io/github/last-commit/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/commits/main)
+[![Issues](https://img.shields.io/github/issues/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/issues)
+[![Dependencies Status](https://img.shields.io/librariesio/github/jerdog/serverless-social-bot)](https://libraries.io/github/jerdog/serverless-social-bot)
+
 A Node.js-based serverless bot that generates and posts content to multiple social media platforms using Markov chains. The bot creates natural-sounding posts by learning from existing content while maintaining platform-specific constraints.
 
 Inspired by the now archived https://github.com/tommeagher/heroku_ebooks

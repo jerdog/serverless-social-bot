@@ -3,15 +3,46 @@
   "version": "1.0.0",
   "description": "A serverless social media bot using Markov chains",
   "type": "module",
+  "engines": {
+    "node": ">=20.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jerdog/serverless-social-bot"
+  },
+  "license": "MIT",
+  "keywords": [
+    "serverless",
+    "social",
+    "bot",
+    "markov",
+    "mastodon",
+    "bluesky"
+  ],
+  "author": "Jeremy Meiss",
+  "bugs": {
+    "url": "https://github.com/jerdog/serverless-social-bot/issues"
+  },
   "scripts": {
     "dev": "wrangler dev worker.js",
     "deploy": "wrangler deploy worker.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch"
+  },
+  "jest": {
+    "transform": {},
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "moduleFileExtensions": ["js", "json", "jsx", "node"]
   },
   "dependencies": {
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
-    "wrangler": "^3.22.1"
+    "@babel/core": "^7.23.5",
+    "@babel/preset-env": "^7.23.5",
+    "babel-jest": "^29.7.0",
+    "jest": "^29.7.0",
+    "wrangler": "^3.89.0"
   }
 }

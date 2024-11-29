@@ -647,4 +647,4 @@ async function main() {
 }
 
 // Export for worker
-export { debug, main };
+export { debug, main, MarkovChain };
