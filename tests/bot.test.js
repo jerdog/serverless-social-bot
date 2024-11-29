@@ -7,30 +7,35 @@ import fs from 'fs/promises';
 
 // Load test environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '../.env.test') });
+const envPath = path.join(__dirname, '../.env.test');
+dotenv.config({ path: envPath });
 
 describe('Bot', () => {
     let envBackup;
     let sampleTweets;
 
     beforeAll(async () => {
+        // Backup original environment
+        envBackup = { ...process.env };
+        
+        // Load test environment variables
+        const envConfig = dotenv.parse(await fs.readFile(envPath));
+        Object.assign(process.env, envConfig);
+
         // Load sample tweets from assets
         try {
             const tweetsPath = path.join(__dirname, '../assets/source-tweets.txt');
             const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
             sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
         } catch (error) {
-            console.warn('Warning: source-tweets.txt not found or empty, using empty array');
+            console.log('No sample tweets file found, using fallback data');
             sampleTweets = [];
         }
     });
 
-    beforeEach(() => {
-        envBackup = { ...process.env };
-    });
-
     afterEach(() => {
-        process.env = envBackup;
+        // Restore original environment after each test
+        process.env = { ...envBackup };
     });
 
     describe('loadConfig', () => {
@@ -210,14 +215,15 @@ describe('Bot', () => {
     describe('generatePost', () => {
         beforeEach(async () => {
             // Set up test environment for generatePost tests
-            process.env = {
+            const envConfig = dotenv.parse(await fs.readFile(envPath));
+            Object.assign(process.env, envConfig);
+            
+            // Override specific values for testing
+            Object.assign(process.env, {
                 DEBUG_MODE: 'true',
-                DEBUG_LEVEL: 'verbose',
-                MARKOV_STATE_SIZE: '2',
-                MARKOV_MAX_TRIES: '100',
-                MARKOV_MIN_CHARS: '30',
-                MARKOV_MAX_CHARS: '280'
-            };
+                DEBUG_LEVEL: 'verbose'
+            });
+
             await loadConfig();
         });
 
