@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Last Commit](https://img.shields.io/github/last-commit/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/commits/main)
 [![Issues](https://img.shields.io/github/issues/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/issues)
-[![Dependencies Status](https://img.shields.io/librariesio/github/jerdog/serverless-social-bot)](https://libraries.io/github/jerdog/serverless-social-bot)
+<!-- [![Dependencies Status](https://img.shields.io/librariesio/github/jerdog/serverless-social-bot)](https://libraries.io/github/jerdog/serverless-social-bot) -->
 
 A Node.js-based serverless bot that generates and posts content to multiple social media platforms using Markov chains. The bot creates natural-sounding posts by learning from existing content while maintaining platform-specific constraints.
 
@@ -48,6 +48,10 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
   - Generation attempt tracking
   - API response monitoring
   - Per-platform post processing stats
+
+## Status
+[![CI](https://github.com/jerdog/serverless-social-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/jerdog/serverless-social-bot/actions/workflows/ci.yml)
+[![Publish Package](https://github.com/jerdog/serverless-social-bot/actions/workflows/publish.yml/badge.svg)](https://github.com/jerdog/serverless-social-bot/actions/workflows/publish.yml)
 
 ## Requirements
 
@@ -142,6 +146,40 @@ The worker will automatically run every 2 hours. You can monitor its execution i
 
 Note: The 30% random posting chance is still active in the worker, so it will only actually post about once every 6-7 hours on average.
 
+## Releasing
+
+To release a new version:
+
+1. Ensure all changes are committed and tests pass:
+```bash
+git status
+npm test
+```
+
+2. Update the version (this will create a git tag):
+```bash
+npm version patch  # for bug fixes
+npm version minor  # for new features
+npm version major  # for breaking changes
+```
+
+3. Push changes and tags:
+```bash
+git push && git push --tags
+```
+
+4. Create a release on GitHub:
+   - Go to [Releases](https://github.com/jerdog/serverless-social-bot/releases)
+   - Click "Create a new release"
+   - Select the tag you just pushed
+   - Add release notes
+   - Click "Publish release"
+
+The GitHub Action will automatically:
+- Run tests
+- Publish to npm (if on main branch)
+- Deploy to Cloudflare Workers (if on main branch)
+
 ## Configuration
 
 ### Development Variables (.dev.vars)
@@ -177,6 +215,26 @@ EXCLUDED_WORDS=["word1", "word2", "word3"]
 DEBUG_MODE=true
 DEBUG_LEVEL=verbose  # or "info"
 ```
+
+### Cloudflare Workers Configuration
+
+1. Copy the example configuration file:
+```bash
+cp wrangler.toml.example wrangler.toml
+```
+
+2. Update the following variables in your `wrangler.toml`:
+- `MASTODON_URL`: Your Mastodon instance URL
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon API access token
+- `BLUESKY_SERVICE`: Bluesky API service URL (default: https://bsky.social)
+- `BLUESKY_IDENTIFIER`: Your Bluesky handle
+- `BLUESKY_APP_PASSWORD`: Your Bluesky app password
+- `DEBUG_MODE`: Set to "true" for verbose logging
+
+The configuration includes separate environments for development and production. Use the following commands:
+
+- Development: `npx wrangler dev`
+- Production: `npx wrangler deploy --env production`
 
 ### Worker Configuration (wrangler.toml)
 

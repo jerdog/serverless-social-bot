@@ -4,6 +4,15 @@ jspm_packages/
 .pnp
 .pnp.js
 .npm
+package-lock.json
+yarn.lock
+.yarn/
+.yarnrc.yml
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
 
 # Logs
 logs
@@ -14,26 +23,11 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
-# Diagnostic reports
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
 # Runtime data
 pids
 *.pid
 *.seed
 *.pid.lock
-
-# Testing
-coverage/
-.nyc_output
-lib-cov
-
-# Build outputs
-dist/
-build/
-.wrangler/
-.cloudflare/
-worker/
 
 # Environment variables
 .env
@@ -67,6 +61,13 @@ worker/
 .LSOverride
 Icon
 ._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
 # Windows
 Thumbs.db
@@ -74,34 +75,48 @@ Thumbs.db:encryptable
 ehthumbs.db
 ehthumbs_vista.db
 [Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
 
-# Local testing
-.secrets
-.github/workflows/release.event.json
+# Build output
+dist/
+build/
+.wrangler/
+.cloudflare/
+worker/
+*.tsbuildinfo
 
-# Temporary files
+# Local dev
+.local/
+.cache/
 *.swp
 *.swo
 *~
-.temp
-.tmp
 
-# Debug
-.debug/
+# Project specific
+tweets.txt
+.secrets
+.github/workflows/release.event.json
 
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
+# Test files
+__tests__/*.js.snap
+__snapshots__/
+*.snap
 
 # Cloudflare specific
 .dev.vars
+wrangler.toml
 .wrangler/
 .cloudflare/
 .requirements.txt
 
 # Misc
+*.bak
+*.tmp
+.temp/
 .cache/
-.local/
-
-# Ignore the following files in the root of this repository:
-tweets.txt
