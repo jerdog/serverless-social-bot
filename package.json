@@ -1,5 +1,5 @@
 {
-  "name": "serverless-social-bot",
+  "name": "@jerdog/serverless-social-bot",
   "version": "1.0.0",
   "description": "A serverless social media bot using Markov chains",
   "type": "module",
@@ -23,11 +23,20 @@
   "bugs": {
     "url": "https://github.com/jerdog/serverless-social-bot/issues"
   },
+  "files": [
+    "bot.js",
+    "worker.js",
+    "wrangler.toml",
+    "assets/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "wrangler dev worker.js",
     "deploy": "wrangler deploy worker.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch"
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "prepublishOnly": "npm test"
   },
   "jest": {
     "transform": {},
@@ -43,6 +52,6 @@
     "@babel/preset-env": "^7.23.5",
     "babel-jest": "^29.7.0",
     "jest": "^29.7.0",
-    "wrangler": "^3.89.0"
+    "wrangler": "^3.15.0"
   }
 }
