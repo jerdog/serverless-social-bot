@@ -8,7 +8,7 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
 
 export default {
     // Handle HTTP requests
-    async fetch(request, env, ctx) {
+    async fetch(request, env, _ctx) {
         try {
             // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
@@ -23,20 +23,23 @@ export default {
 
             // Only allow POST requests to trigger the bot
             if (request.method === 'POST') {
-                await main();
-                return new Response('Bot execution completed successfully', { status: 200 });
+                const result = await main();
+                debug('Bot execution completed', 'info');
+
+                return new Response(result || 'Bot execution completed successfully', { status: 200 });
             }
 
             // Return a simple status for GET requests
             return new Response('Bot is running. Use POST to trigger execution.', { status: 200 });
         } catch (error) {
+            debug(`Error in fetch: ${error.message}`, 'error', error);
             console.error('Error executing bot:', error);
             return new Response('Bot execution failed: ' + error.message, { status: 500 });
         }
     },
 
     // Handle scheduled events
-    async scheduled(event, env, ctx) {
+    async scheduled(event, env, _ctx) {
         try {
             // Set environment variables
             process.env.CLOUDFLARE_WORKER = 'true';
@@ -49,8 +52,12 @@ export default {
                 DEBUG_LEVEL: process.env.DEBUG_LEVEL
             });
 
-            await main();
+            const result = await main();
+            debug('Scheduled bot execution completed', 'info');
+
+            return result;
         } catch (error) {
+            debug(`Error in scheduled run: ${error.message}`, 'error', error);
             console.error('Error in scheduled execution:', error);
             throw error;
         }

@@ -66,78 +66,78 @@ function debug(message, level = 'info', data = null) {
 }
 
 // Configuration loader
-function loadConfig() {
+async function loadConfig() {
     try {
         debug('Loading configuration...', 'verbose');
 
         // Load configuration from environment variables
-        const config = {
+        const envConfig = {
             debug: process.env.DEBUG_MODE === 'true',
-            debugLevel: process.env.DEBUG_LEVEL || 'info',
-            
-            // Markov Chain settings
-            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
-            
-            // Content filtering
-            excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
-            
-            // Bluesky settings
-            blueskyUsername: process.env.BLUESKY_USERNAME,
-            blueskyPassword: process.env.BLUESKY_PASSWORD,
-            blueskyApiUrl: process.env.BLUESKY_API_URL ? process.env.BLUESKY_API_URL.replace(/\/$/, '') : undefined,
-            blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-            
-            // Mastodon settings
-            mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-            mastodonApiUrl: process.env.MASTODON_API_URL ? process.env.MASTODON_API_URL.replace(/\/$/, '') : undefined,
-            mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+            mastodon: {
+                url: process.env.MASTODON_API_URL,
+                token: process.env.MASTODON_ACCESS_TOKEN
+            },
+            bluesky: {
+                service: process.env.BLUESKY_API_URL,
+                identifier: process.env.BLUESKY_USERNAME,
+                password: process.env.BLUESKY_PASSWORD
+            },
+            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE || '2', 10),
+            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS || '30', 10),
+            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS || '280', 10),
+            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES || '100', 10),
+            // Add source accounts with defaults
+            mastodonSourceAccounts: (process.env.MASTODON_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
+            blueskySourceAccounts: (process.env.BLUESKY_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
+            // Add default source accounts if none provided
+            excludedWords: (process.env.EXCLUDED_WORDS || '').split(',').filter(Boolean)
         };
+
+        // If no source accounts provided, use some defaults
+        if (envConfig.mastodonSourceAccounts.length === 0) {
+            envConfig.mastodonSourceAccounts = ['Mastodon.social'];
+        }
+        if (envConfig.blueskySourceAccounts.length === 0) {
+            envConfig.blueskySourceAccounts = ['bsky.social'];
+        }
 
         // Log loaded configuration (excluding sensitive data)
         debug('Loaded configuration:', 'verbose', {
-            debug: config.debug,
-            debugLevel: config.debugLevel,
-            markovSettings: {
-                stateSize: config.markovStateSize,
-                maxTries: config.markovMaxTries,
-                minChars: config.markovMinChars,
-                maxChars: config.markovMaxChars
+            debug: envConfig.debug,
+            mastodon: {
+                url: envConfig.mastodon.url
             },
-            blueskyUsername: config.blueskyUsername,
-            blueskyApiUrl: config.blueskyApiUrl,
-            mastodonApiUrl: config.mastodonApiUrl
+            bluesky: {
+                service: envConfig.bluesky.service,
+                identifier: envConfig.bluesky.identifier
+            },
+            markovStateSize: envConfig.markovStateSize,
+            markovMinChars: envConfig.markovMinChars,
+            markovMaxChars: envConfig.markovMaxChars,
+            markovMaxTries: envConfig.markovMaxTries
         });
 
         // Validate required configuration
         const requiredVars = [
-            ['BLUESKY_USERNAME', config.blueskyUsername],
-            ['BLUESKY_PASSWORD', config.blueskyPassword],
-            ['BLUESKY_API_URL', config.blueskyApiUrl],
-            ['MASTODON_ACCESS_TOKEN', config.mastodonAccessToken],
-            ['MASTODON_API_URL', config.mastodonApiUrl]
+            ['MASTODON_API_URL', envConfig.mastodon.url],
+            ['MASTODON_ACCESS_TOKEN', envConfig.mastodon.token],
+            ['BLUESKY_API_URL', envConfig.bluesky.service],
+            ['BLUESKY_USERNAME', envConfig.bluesky.identifier],
+            ['BLUESKY_PASSWORD', envConfig.bluesky.password]
         ];
 
         const missingVars = requiredVars
-            .filter(([name, value]) => !value)
+            .filter(([_name, value]) => !value)
             .map(([name]) => name);
 
         if (missingVars.length > 0) {
-            throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+            const error = new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+            debug(error.message, 'error');
+            throw error;
         }
 
-        // Validate Bluesky username
-        if (!validateBlueskyUsername(config.blueskyUsername)) {
-            const errorMsg = `Invalid Bluesky username format: "${config.blueskyUsername}". ` +
-                'Username should be in the format "handle.bsky.social" or "handle.domain.tld". ' +
-                'Make sure to include the full domain and check for typos.';
-            debug(errorMsg, 'error');
-            throw new Error(errorMsg);
-        }
-
-        return config;
+        CONFIG = envConfig;
+        return envConfig;
     } catch (error) {
         debug(`Error loading configuration: ${error.message}`, 'error');
         throw error;
@@ -182,6 +182,13 @@ function cleanText(text) {
     // Then decode HTML entities
     text = decodeHtmlEntities(text);
 
+    // Remove control characters and normalize whitespace
+    text = text
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+        .replace(/\s+/g, ' ')
+        .trim();
+
     // Basic cleaning
     text = text
         // Remove URLs
@@ -202,12 +209,8 @@ function cleanText(text) {
 
     // Final cleanup of any remaining special characters
     text = text
-        // Replace smart quotes with regular quotes
-        .replace(/[""]/g, '"')
-        .replace(/['']/g, "'")
-        // Remove any remaining control characters
-        .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-        // Clean up multiple spaces again
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -222,75 +225,99 @@ class MarkovChain {
         this.startStates = [];
     }
 
-    addData(texts) {
-        for (const text of texts) {
-            if (typeof text !== 'string' || !text.trim()) continue;
-            
-            const words = text.trim().split(/\s+/);
-            if (words.length < this.stateSize + 1) continue;
+    async addData(texts) {
+        if (!Array.isArray(texts) || texts.length === 0) {
+            throw new Error('No valid training data found');
+        }
 
-            const startState = words.slice(0, this.stateSize).join(' ');
-            this.startStates.push(startState);
+        const validTexts = texts.filter(text => typeof text === 'string' && text.trim().length > 0);
+        if (validTexts.length === 0) {
+            throw new Error('No valid training data found');
+        }
+
+        for (const text of validTexts) {
+            const words = text.trim().split(/\s+/);
+            if (words.length < this.stateSize) continue;
 
             for (let i = 0; i <= words.length - this.stateSize; i++) {
                 const state = words.slice(i, i + this.stateSize).join(' ');
-                const nextWord = words[i + this.stateSize] || null;
+                const nextWord = words[i + this.stateSize];
 
                 if (!this.chain.has(state)) {
                     this.chain.set(state, []);
                 }
+
                 if (nextWord) {
                     this.chain.get(state).push(nextWord);
                 }
+
+                if (i === 0) {
+                    this.startStates.push(state);
+                }
             }
+        }
+
+        if (this.startStates.length === 0) {
+            throw new Error('No valid training data found');
         }
     }
 
-    generate(options = {}) {
-        const {
-            maxTries = 100,
-            minChars = 100,
-            maxChars = 280
-        } = options;
-
-        for (let attempt = 0; attempt < maxTries; attempt++) {
+    async generate({ minChars = 100, maxChars = 280, maxTries = 100 } = {}) {
+        let attempt = 0;
+        while (attempt < maxTries) {
             try {
-                const startIdx = Math.floor(Math.random() * this.startStates.length);
-                let currentState = this.startStates[startIdx];
-                let result = currentState.split(/\s+/);
-                let currentLength = currentState.length;
-
-                // Generate text until we hit maxChars or can't generate more
-                while (currentLength < maxChars) {
-                    const nextWords = this.chain.get(currentState);
-                    if (!nextWords || nextWords.length === 0) break;
-
-                    const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
-                    if (!nextWord) break;
-
-                    // Check if adding the next word would exceed maxChars
-                    const newLength = currentLength + 1 + nextWord.length; // +1 for space
-                    if (newLength > maxChars) break;
-
-                    result.push(nextWord);
-                    currentLength = newLength;
-                    const words = result.slice(-this.stateSize);
-                    currentState = words.join(' ');
+                const result = await this._generateOnce();
+                if (result.length >= minChars && result.length <= maxChars) {
+                    return { string: result };
                 }
-
-                const generatedText = result.join(' ');
-                // Check if the generated text meets our length criteria
-                if (generatedText.length >= minChars && generatedText.length <= maxChars) {
-                    debug(`Generated text length: ${generatedText.length} characters`, 'verbose');
-                    return { string: generatedText };
-                }
-                debug(`Attempt ${attempt + 1}: Generated text (${generatedText.length} chars) outside bounds [${minChars}, ${maxChars}]`, 'verbose');
             } catch (error) {
-                debug(`Generation attempt ${attempt + 1} failed: ${error.message}`, 'verbose');
+                if (error.message === 'No training data available') {
+                    throw error;
+                }
+                // Continue trying if it's just a generation issue
+            }
+            attempt++;
+        }
+        throw new Error('Failed to generate valid text within constraints');
+    }
+
+    _generateOnce() {
+        if (this.startStates.length === 0) {
+            throw new Error('No training data available');
+        }
+
+        const startState = this.startStates[Math.floor(Math.random() * this.startStates.length)];
+        let currentState = startState;
+        let result = startState;
+        let usedStates = new Set([startState]);
+        let shouldContinue = true;
+
+        while (shouldContinue) {
+            const possibleNextWords = this.chain.get(currentState);
+            if (!possibleNextWords || possibleNextWords.length === 0) {
+                shouldContinue = false;
                 continue;
             }
+
+            // Shuffle possible next words to increase variation
+            const shuffledWords = [...possibleNextWords].sort(() => Math.random() - 0.5);
+            let foundNew = false;
+
+            for (const nextWord of shuffledWords) {
+                const newState = result.split(/\s+/).slice(-(this.stateSize - 1)).concat(nextWord).join(' ');
+                if (!usedStates.has(newState)) {
+                    result += ' ' + nextWord;
+                    currentState = newState;
+                    usedStates.add(newState);
+                    foundNew = true;
+                    break;
+                }
+            }
+
+            if (!foundNew) break;
         }
-        throw new Error(`Failed to generate text between ${minChars} and ${maxChars} characters after ${maxTries} attempts`);
+
+        return result;
     }
 }
 
@@ -326,7 +353,7 @@ async function fetchRecentPosts() {
                 debug('Mastodon API error', 'error', errorData);
                 throw new Error(`Mastodon API error: ${errorData.error || 'Unknown error'}`);
             }
-            
+
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {
@@ -361,6 +388,7 @@ async function fetchRecentPosts() {
                         'Authorization': `Bearer ${blueskyToken}`
                     }
                 });
+
                 const blueskyData = await blueskyResponse.json();
                 
                 if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
@@ -385,6 +413,19 @@ async function fetchRecentPosts() {
         
         const validPosts = posts.filter(text => text && text.length > 0);
         debug(`Successfully fetched ${validPosts.length} total posts`, 'info');
+        
+        // Add fallback content if no posts were fetched
+        if (validPosts.length === 0) {
+            debug('No posts fetched, using fallback content', 'info');
+            validPosts.push(
+                'Hello world! This is a test post.',
+                'The quick brown fox jumps over the lazy dog.',
+                'To be, or not to be, that is the question.',
+                'All that glitters is not gold.',
+                'A journey of a thousand miles begins with a single step.'
+            );
+        }
+        
         return validPosts;
         
     } catch (error) {
@@ -408,8 +449,8 @@ async function getBlueskyAuth() {
         }
 
         const authData = {
-            "identifier": CONFIG.blueskyUsername,
-            "password": CONFIG.blueskyPassword
+            'identifier': CONFIG.blueskyUsername,
+            'password': CONFIG.blueskyPassword
         };
 
         debug('Sending Bluesky auth request...', 'verbose', authData);
@@ -467,38 +508,27 @@ async function getBlueskyDid() {
 }
 
 // Post Generation
-async function generatePost(contentArray) {
-    if (!contentArray || contentArray.length === 0) {
-        throw new Error('Content array is empty. Cannot generate Markov chain.');
+async function generatePost(content) {
+    if (!Array.isArray(content) || content.length === 0) {
+        throw new Error('Content array is empty');
     }
 
-    const cleanContent = contentArray.filter(content => 
-        typeof content === 'string' && content.trim().length > 0
-    ).map(content => content.trim());
-
-    debug(`Processing ${cleanContent.length} content items`, 'verbose');
+    const validContent = content.filter(text => typeof text === 'string' && text.trim().length > 0);
+    if (validContent.length === 0) {
+        throw new Error('Content array is empty');
+    }
 
     try {
         const markov = new MarkovChain(CONFIG.markovStateSize);
-        markov.addData(cleanContent);
-
-        const options = {
-            maxTries: CONFIG.markovMaxTries,
+        await markov.addData(validContent);
+        return await markov.generate({
             minChars: CONFIG.markovMinChars,
-            maxChars: CONFIG.markovMaxChars
-        };
-
-        const result = markov.generate(options);
-        debug(`Generated post length: ${result.string.length} characters`, 'verbose');
-        
-        if (!result || !result.string) {
-            throw new Error('Failed to generate valid post');
-        }
-
-        return result.string;
+            maxChars: CONFIG.markovMaxChars,
+            maxTries: CONFIG.markovMaxTries
+        });
     } catch (error) {
         debug(`Error generating Markov chain: ${error.message}`, 'error');
-        throw new Error(`Failed to generate post: ${error.message}`);
+        throw new Error(error.message);
     }
 }
 
@@ -639,7 +669,7 @@ async function main() {
         }
 
         // Post to social media
-        await postToSocialMedia(post);
+        await postToSocialMedia(post.string);
     } catch (error) {
         debug(`Error in main execution: ${error.message}`, 'error');
         throw error;
@@ -647,4 +677,4 @@ async function main() {
 }
 
 // Export for worker
-export { debug, main };
+export { debug, main, MarkovChain, generatePost, loadConfig };

@@ -1,0 +1,34 @@
+# Development files
+.github/
+tests/
+babel.config.json
+jest.config.js
+.env
+.env.*
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+coverage/
+
+# Git files
+.git/
+.gitignore
+
+# Misc
+.DS_Store
+Thumbs.db

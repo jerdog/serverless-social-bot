@@ -1,0 +1,55 @@
+# The name of your Workers application
+name = "serverless-social-bot"
+
+# The main entry point for your application
+main = "worker.js"
+
+# Compatibility date for Workers runtime features
+compatibility_date = "2024-11-06"
+
+# Configure your Workers environment
+[vars]
+# Example environment variables (DO NOT put actual values here)
+MASTODON_URL = "https://mastodon.example.com"
+MASTODON_ACCESS_TOKEN = "your_mastodon_token"
+BLUESKY_SERVICE = "https://bsky.social"
+BLUESKY_IDENTIFIER = "your.handle.bsky.social"
+BLUESKY_APP_PASSWORD = "your_app_password"
+DEBUG_MODE = "false"
+
+# Development environment variables
+[env.development]
+name = "serverless-social-bot-dev"
+vars = { DEBUG_MODE = "true" }
+
+# Production environment variables
+[env.production]
+name = "serverless-social-bot"
+vars = { DEBUG_MODE = "false" }
+
+# Customize the build process if needed
+[build]
+command = "npm run build --if-present"
+watch_dir = "src"
+
+# Configure Workers KV Namespace (if needed)
+# kv_namespaces = [
+#   { binding = "MY_KV", id = "xxx", preview_id = "yyy" }
+# ]
+
+# Configure Durable Objects (if needed)
+# [durable_objects]
+# bindings = [
+#   { name = "MY_DURABLE_OBJECT", class_name = "MyDurableObject" }
+# ]
+
+# Configure Routes (if needed)
+# routes = [
+#   { pattern = "example.com/api/*", zone_id = "your_zone_id" }
+# ]
+
+# Configure miniflare for local development
+[miniflare]
+kv_persist = true
+cache_persist = true
+durable_objects_persist = true

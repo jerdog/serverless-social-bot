@@ -1,5 +1,12 @@
 # Serverless Social Media Bot
 
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jerdog/serverless-social-bot)
+[![Node Version](https://img.shields.io/node/v/serverless-social-bot)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Last Commit](https://img.shields.io/github/last-commit/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/commits/main)
+[![Issues](https://img.shields.io/github/issues/jerdog/serverless-social-bot)](https://github.com/jerdog/serverless-social-bot/issues)
+<!-- [![Dependencies Status](https://img.shields.io/librariesio/github/jerdog/serverless-social-bot)](https://libraries.io/github/jerdog/serverless-social-bot) -->
+
 A Node.js-based serverless bot that generates and posts content to multiple social media platforms using Markov chains. The bot creates natural-sounding posts by learning from existing content while maintaining platform-specific constraints.
 
 Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
@@ -42,6 +49,10 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
   - API response monitoring
   - Per-platform post processing stats
 
+## Status
+[![CI](https://github.com/jerdog/serverless-social-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/jerdog/serverless-social-bot/actions/workflows/ci.yml)
+[![Publish Package](https://github.com/jerdog/serverless-social-bot/actions/workflows/publish.yml/badge.svg)](https://github.com/jerdog/serverless-social-bot/actions/workflows/publish.yml)
+
 ## Requirements
 
 - Node.js v18 or higher
@@ -49,6 +60,61 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - Mastodon account with API access
 - [Bluesky](https://bsky.app) account with API access
 - [Cloudflare](https://developers.cloudflare.com) account (for deployment)
+
+## Setup
+
+### Training Data
+
+The bot requires a `tweets.txt` file in the `assets` directory to generate content. This file should contain one tweet per line, with each tweet being the raw text content. URLs, mentions (@username), and hashtags will be preserved in the generated content.
+
+Example `assets/tweets.txt` format:
+```text
+Just finished a great coding session! #javascript #webdev
+@friend Check out this amazing article https://example.com/article
+The weather is perfect for a walk in the park today
+```
+
+Create the `assets` directory and `tweets.txt` file:
+```bash
+mkdir -p assets
+touch assets/tweets.txt
+```
+
+Then add your training data to the file. The more tweets you add, the better the generated content will be. A minimum of 1,000 tweets is recommended for good results.
+
+### Environment Variables
+
+Store sensitive information and user-specific settings in `.dev.vars`:
+
+- `BLUESKY_USERNAME`: Your Bluesky handle (format: username.bsky.social)
+- `BLUESKY_PASSWORD`: Your Bluesky app password
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon access token
+- `BLUESKY_SOURCE_ACCOUNTS`: JSON array of Bluesky accounts to learn from
+- `MASTODON_SOURCE_ACCOUNTS`: JSON array of Mastodon accounts to learn from
+- `EXCLUDED_WORDS`: JSON array of words to exclude from generated posts
+
+For local development, you can use the provided `.dev.vars.example` as a template:
+
+```env
+# Bluesky Configuration
+BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
+
+# Mastodon Configuration
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
+MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
+
+# Source Accounts Configuration
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
+
+# Content Filtering
+EXCLUDED_WORDS=["word1", "word2", "word3"]
+
+# Debug Configuration (Optional)
+DEBUG_MODE=true
+DEBUG_LEVEL=verbose  # or "info"
+```
 
 ## Installation
 
@@ -69,26 +135,6 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
    ```
 
 4. Edit `.dev.vars` with your configuration:
-   ```env
-   # Bluesky Configuration
-   BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
-   BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
-
-   # Mastodon Configuration
-   MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
-   MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
-
-   # Source Accounts Configuration
-   BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
-   MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
-
-   # Content Filtering
-   EXCLUDED_WORDS=["word1", "word2", "word3"]
-
-   # Debug Configuration (Optional)
-   DEBUG_MODE=true
-   DEBUG_LEVEL=verbose  # or "info"
-   ```
 
 ## Usage
 
@@ -170,6 +216,26 @@ EXCLUDED_WORDS=["word1", "word2", "word3"]
 DEBUG_MODE=true
 DEBUG_LEVEL=verbose  # or "info"
 ```
+
+### Cloudflare Workers Configuration
+
+1. Copy the example configuration file:
+```bash
+cp wrangler.toml.example wrangler.toml
+```
+
+2. Update the following variables in your `wrangler.toml`:
+- `MASTODON_URL`: Your Mastodon instance URL
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon API access token
+- `BLUESKY_SERVICE`: Bluesky API service URL (default: https://bsky.social)
+- `BLUESKY_IDENTIFIER`: Your Bluesky handle
+- `BLUESKY_APP_PASSWORD`: Your Bluesky app password
+- `DEBUG_MODE`: Set to "true" for verbose logging
+
+The configuration includes separate environments for development and production. Use the following commands:
+
+- Development: `npx wrangler dev`
+- Production: `npx wrangler deploy --env production`
 
 ### Worker Configuration (wrangler.toml)
 
