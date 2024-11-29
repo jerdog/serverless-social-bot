@@ -61,6 +61,61 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
 - [Bluesky](https://bsky.app) account with API access
 - [Cloudflare](https://developers.cloudflare.com) account (for deployment)
 
+## Setup
+
+### Training Data
+
+The bot requires a `tweets.txt` file in the `assets` directory to generate content. This file should contain one tweet per line, with each tweet being the raw text content. URLs, mentions (@username), and hashtags will be preserved in the generated content.
+
+Example `assets/tweets.txt` format:
+```text
+Just finished a great coding session! #javascript #webdev
+@friend Check out this amazing article https://example.com/article
+The weather is perfect for a walk in the park today
+```
+
+Create the `assets` directory and `tweets.txt` file:
+```bash
+mkdir -p assets
+touch assets/tweets.txt
+```
+
+Then add your training data to the file. The more tweets you add, the better the generated content will be. A minimum of 1,000 tweets is recommended for good results.
+
+### Environment Variables
+
+Store sensitive information and user-specific settings in `.dev.vars`:
+
+- `BLUESKY_USERNAME`: Your Bluesky handle (format: username.bsky.social)
+- `BLUESKY_PASSWORD`: Your Bluesky app password
+- `MASTODON_ACCESS_TOKEN`: Your Mastodon access token
+- `BLUESKY_SOURCE_ACCOUNTS`: JSON array of Bluesky accounts to learn from
+- `MASTODON_SOURCE_ACCOUNTS`: JSON array of Mastodon accounts to learn from
+- `EXCLUDED_WORDS`: JSON array of words to exclude from generated posts
+
+For local development, you can use the provided `.dev.vars.example` as a template:
+
+```env
+# Bluesky Configuration
+BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
+BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
+
+# Mastodon Configuration
+MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
+MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
+
+# Source Accounts Configuration
+BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
+MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
+
+# Content Filtering
+EXCLUDED_WORDS=["word1", "word2", "word3"]
+
+# Debug Configuration (Optional)
+DEBUG_MODE=true
+DEBUG_LEVEL=verbose  # or "info"
+```
+
 ## Installation
 
 1. [Fork](https://github.com/jerdog/serverless-social-bot/fork) and Clone the repository:
@@ -80,26 +135,6 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
    ```
 
 4. Edit `.dev.vars` with your configuration:
-   ```env
-   # Bluesky Configuration
-   BLUESKY_USERNAME=mybot.bsky.social  # Recommend setting up a special account
-   BLUESKY_PASSWORD=xxxx-xxxx-xxxx-xxxx  # ONLY use an App Password, https://bsky.app/settings/app-passwords
-
-   # Mastodon Configuration
-   MASTODON_ACCESS_TOKEN=your_mastodon_access_token_here  # Recommend setting up a special account and getting that access token
-   MASTODON_API_URL=https://mastodon.social  # Optional, defaults to mastodon.social
-
-   # Source Accounts Configuration
-   BLUESKY_SOURCE_ACCOUNTS=["@example.bsky.social", "@another.bsky.social"]  # Accounts you want to grab some posts from to use with Markov Chain
-   MASTODON_SOURCE_ACCOUNTS=["@user@mastodon.social", "@another@instance.social"] # Accounts you want to grab some posts from to use with Markov Chain
-
-   # Content Filtering
-   EXCLUDED_WORDS=["word1", "word2", "word3"]
-
-   # Debug Configuration (Optional)
-   DEBUG_MODE=true
-   DEBUG_LEVEL=verbose  # or "info"
-   ```
 
 ## Usage
 

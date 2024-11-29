@@ -71,73 +71,49 @@ function loadConfig() {
         debug('Loading configuration...', 'verbose');
 
         // Load configuration from environment variables
-        const config = {
+        const envConfig = {
             debug: process.env.DEBUG_MODE === 'true',
-            debugLevel: process.env.DEBUG_LEVEL || 'info',
-            
-            // Markov Chain settings
-            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE) || 2,
-            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES) || 100,
-            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS) || 100,
-            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS) || 280,
-            
-            // Content filtering
-            excludedWords: JSON.parse(process.env.EXCLUDED_WORDS || '[]'),
-            
-            // Bluesky settings
-            blueskyUsername: process.env.BLUESKY_USERNAME,
-            blueskyPassword: process.env.BLUESKY_PASSWORD,
-            blueskyApiUrl: process.env.BLUESKY_API_URL ? process.env.BLUESKY_API_URL.replace(/\/$/, '') : undefined,
-            blueskySourceAccounts: JSON.parse(process.env.BLUESKY_SOURCE_ACCOUNTS || '[]'),
-            
-            // Mastodon settings
-            mastodonAccessToken: process.env.MASTODON_ACCESS_TOKEN,
-            mastodonApiUrl: process.env.MASTODON_API_URL ? process.env.MASTODON_API_URL.replace(/\/$/, '') : undefined,
-            mastodonSourceAccounts: JSON.parse(process.env.MASTODON_SOURCE_ACCOUNTS || '[]')
+            mastodon: {
+                url: process.env.MASTODON_URL,
+                token: process.env.MASTODON_ACCESS_TOKEN
+            },
+            bluesky: {
+                service: process.env.BLUESKY_SERVICE,
+                identifier: process.env.BLUESKY_IDENTIFIER,
+                password: process.env.BLUESKY_APP_PASSWORD
+            }
         };
 
         // Log loaded configuration (excluding sensitive data)
         debug('Loaded configuration:', 'verbose', {
-            debug: config.debug,
-            debugLevel: config.debugLevel,
-            markovSettings: {
-                stateSize: config.markovStateSize,
-                maxTries: config.markovMaxTries,
-                minChars: config.markovMinChars,
-                maxChars: config.markovMaxChars
+            debug: envConfig.debug,
+            mastodon: {
+                url: envConfig.mastodon.url
             },
-            blueskyUsername: config.blueskyUsername,
-            blueskyApiUrl: config.blueskyApiUrl,
-            mastodonApiUrl: config.mastodonApiUrl
+            bluesky: {
+                service: envConfig.bluesky.service,
+                identifier: envConfig.bluesky.identifier
+            }
         });
 
         // Validate required configuration
         const requiredVars = [
-            ['BLUESKY_USERNAME', config.blueskyUsername],
-            ['BLUESKY_PASSWORD', config.blueskyPassword],
-            ['BLUESKY_API_URL', config.blueskyApiUrl],
-            ['MASTODON_ACCESS_TOKEN', config.mastodonAccessToken],
-            ['MASTODON_API_URL', config.mastodonApiUrl]
+            ['MASTODON_URL', envConfig.mastodon.url],
+            ['MASTODON_ACCESS_TOKEN', envConfig.mastodon.token],
+            ['BLUESKY_SERVICE', envConfig.bluesky.service],
+            ['BLUESKY_IDENTIFIER', envConfig.bluesky.identifier],
+            ['BLUESKY_APP_PASSWORD', envConfig.bluesky.password]
         ];
 
         const missingVars = requiredVars
-            .filter(([name, value]) => !value)
+            .filter(([_name, value]) => !value)
             .map(([name]) => name);
 
         if (missingVars.length > 0) {
             throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
         }
 
-        // Validate Bluesky username
-        if (!validateBlueskyUsername(config.blueskyUsername)) {
-            const errorMsg = `Invalid Bluesky username format: "${config.blueskyUsername}". ` +
-                'Username should be in the format "handle.bsky.social" or "handle.domain.tld". ' +
-                'Make sure to include the full domain and check for typos.';
-            debug(errorMsg, 'error');
-            throw new Error(errorMsg);
-        }
-
-        return config;
+        return envConfig;
     } catch (error) {
         debug(`Error loading configuration: ${error.message}`, 'error');
         throw error;
@@ -182,6 +158,13 @@ function cleanText(text) {
     // Then decode HTML entities
     text = decodeHtmlEntities(text);
 
+    // Remove control characters and normalize whitespace
+    text = text
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+        .replace(/\s+/g, ' ')
+        .trim();
+
     // Basic cleaning
     text = text
         // Remove URLs
@@ -202,12 +185,8 @@ function cleanText(text) {
 
     // Final cleanup of any remaining special characters
     text = text
-        // Replace smart quotes with regular quotes
-        .replace(/[""]/g, '"')
-        .replace(/['']/g, "'")
-        // Remove any remaining control characters
-        .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-        // Clean up multiple spaces again
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -408,8 +387,8 @@ async function getBlueskyAuth() {
         }
 
         const authData = {
-            "identifier": CONFIG.blueskyUsername,
-            "password": CONFIG.blueskyPassword
+            'identifier': CONFIG.blueskyUsername,
+            'password': CONFIG.blueskyPassword
         };
 
         debug('Sending Bluesky auth request...', 'verbose', authData);
