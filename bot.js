@@ -74,14 +74,18 @@ function loadConfig() {
         const envConfig = {
             debug: process.env.DEBUG_MODE === 'true',
             mastodon: {
-                url: process.env.MASTODON_URL,
+                url: process.env.MASTODON_API_URL,
                 token: process.env.MASTODON_ACCESS_TOKEN
             },
             bluesky: {
-                service: process.env.BLUESKY_SERVICE,
-                identifier: process.env.BLUESKY_IDENTIFIER,
-                password: process.env.BLUESKY_APP_PASSWORD
-            }
+                service: process.env.BLUESKY_API_URL,
+                identifier: process.env.BLUESKY_USERNAME,
+                password: process.env.BLUESKY_PASSWORD
+            },
+            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE || '2', 10),
+            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS || '30', 10),
+            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS || '280', 10),
+            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES || '100', 10)
         };
 
         // Log loaded configuration (excluding sensitive data)
@@ -93,16 +97,20 @@ function loadConfig() {
             bluesky: {
                 service: envConfig.bluesky.service,
                 identifier: envConfig.bluesky.identifier
-            }
+            },
+            markovStateSize: envConfig.markovStateSize,
+            markovMinChars: envConfig.markovMinChars,
+            markovMaxChars: envConfig.markovMaxChars,
+            markovMaxTries: envConfig.markovMaxTries
         });
 
         // Validate required configuration
         const requiredVars = [
-            ['MASTODON_URL', envConfig.mastodon.url],
+            ['MASTODON_API_URL', envConfig.mastodon.url],
             ['MASTODON_ACCESS_TOKEN', envConfig.mastodon.token],
-            ['BLUESKY_SERVICE', envConfig.bluesky.service],
-            ['BLUESKY_IDENTIFIER', envConfig.bluesky.identifier],
-            ['BLUESKY_APP_PASSWORD', envConfig.bluesky.password]
+            ['BLUESKY_API_URL', envConfig.bluesky.service],
+            ['BLUESKY_USERNAME', envConfig.bluesky.identifier],
+            ['BLUESKY_PASSWORD', envConfig.bluesky.password]
         ];
 
         const missingVars = requiredVars
@@ -113,6 +121,7 @@ function loadConfig() {
             throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
         }
 
+        CONFIG = envConfig;
         return envConfig;
     } catch (error) {
         debug(`Error loading configuration: ${error.message}`, 'error');
@@ -201,7 +210,11 @@ class MarkovChain {
         this.startStates = [];
     }
 
-    addData(texts) {
+    async addData(texts) {
+        if (!Array.isArray(texts)) {
+            throw new Error('Input must be an array of strings');
+        }
+
         for (const text of texts) {
             if (typeof text !== 'string' || !text.trim()) continue;
             
@@ -223,14 +236,33 @@ class MarkovChain {
                 }
             }
         }
+
+        if (this.startStates.length === 0) {
+            throw new Error('No valid training data found');
+        }
     }
 
-    generate(options = {}) {
+    async generate(options = {}) {
+        if (this.startStates.length === 0) {
+            throw new Error('No training data available');
+        }
+
         const {
             maxTries = 100,
             minChars = 100,
             maxChars = 280
         } = options;
+
+        // If minChars is greater than maxChars, throw an error
+        if (minChars > maxChars) {
+            throw new Error(`Invalid length constraints: minChars (${minChars}) cannot be greater than maxChars (${maxChars})`);
+        }
+
+        // If minChars is impossibly large, fail fast
+        const maxPossibleLength = this.chain.size * 20; // Rough estimate
+        if (minChars > maxPossibleLength) {
+            throw new Error(`Required length (${minChars}) is too large for the available training data`);
+        }
 
         for (let attempt = 0; attempt < maxTries; attempt++) {
             try {
@@ -269,6 +301,7 @@ class MarkovChain {
                 continue;
             }
         }
+
         throw new Error(`Failed to generate text between ${minChars} and ${maxChars} characters after ${maxTries} attempts`);
     }
 }
@@ -459,7 +492,7 @@ async function generatePost(contentArray) {
 
     try {
         const markov = new MarkovChain(CONFIG.markovStateSize);
-        markov.addData(cleanContent);
+        await markov.addData(cleanContent);
 
         const options = {
             maxTries: CONFIG.markovMaxTries,
@@ -467,14 +500,14 @@ async function generatePost(contentArray) {
             maxChars: CONFIG.markovMaxChars
         };
 
-        const result = markov.generate(options);
+        const result = await markov.generate(options);
         debug(`Generated post length: ${result.string.length} characters`, 'verbose');
         
         if (!result || !result.string) {
             throw new Error('Failed to generate valid post');
         }
 
-        return result.string;
+        return result;
     } catch (error) {
         debug(`Error generating Markov chain: ${error.message}`, 'error');
         throw new Error(`Failed to generate post: ${error.message}`);
@@ -618,7 +651,7 @@ async function main() {
         }
 
         // Post to social media
-        await postToSocialMedia(post);
+        await postToSocialMedia(post.string);
     } catch (error) {
         debug(`Error in main execution: ${error.message}`, 'error');
         throw error;
@@ -626,4 +659,4 @@ async function main() {
 }
 
 // Export for worker
-export { debug, main, MarkovChain };
+export { debug, main, MarkovChain, generatePost, loadConfig };
