@@ -1,6 +1,6 @@
 {
   "name": "@jerdog/serverless-social-bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A serverless social media bot using Markov chains",
   "type": "module",
   "engines": {
@@ -56,7 +56,9 @@
       "jsx",
       "node"
     ],
-    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"]
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.js"
+    ]
   },
   "eslintConfig": {
     "env": {
@@ -64,14 +66,24 @@
       "es2022": true,
       "jest": true
     },
-    "extends": ["eslint:recommended"],
+    "extends": [
+      "eslint:recommended"
+    ],
     "parserOptions": {
       "ecmaVersion": 2022,
       "sourceType": "module"
     },
     "rules": {
-      "quotes": ["error", "single"],
-      "no-constant-condition": ["error", { "checkLoops": false }]
+      "quotes": [
+        "error",
+        "single"
+      ],
+      "no-constant-condition": [
+        "error",
+        {
+          "checkLoops": false
+        }
+      ]
     }
   },
   "dependencies": {
