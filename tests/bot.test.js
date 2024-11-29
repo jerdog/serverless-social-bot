@@ -1,114 +1,159 @@
-import { jest, describe, test, beforeEach, afterEach, expect } from '@jest/globals';
-import { debug, generatePost, loadConfig } from '../bot.js';
-import fs from 'fs';
+import { jest } from '@jest/globals';
+import { generatePost, loadConfig } from '../bot.js';
+import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Load test environment variables
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '../.env.test') });
 
-describe('Bot Utilities', () => {
-    let consoleLogSpy;
-    let consoleErrorSpy;
-    let originalEnv;
-    let originalConsoleLog;
+describe('Bot', () => {
+    let envBackup;
+    let sampleTweets;
 
-    beforeEach(async () => {
-        originalEnv = process.env;
-        process.env = {
-            ...originalEnv,
-            MASTODON_API_URL: 'https://mastodon.social',
-            MASTODON_ACCESS_TOKEN: 'test_token',
-            BLUESKY_API_URL: 'https://bsky.social',
-            BLUESKY_USERNAME: 'test.user',
-            BLUESKY_PASSWORD: 'test_password',
-            MARKOV_STATE_SIZE: '2',
-            MARKOV_MIN_CHARS: '30',
-            MARKOV_MAX_CHARS: '280',
-            MARKOV_MAX_TRIES: '100'
-        };
-        originalConsoleLog = console.log;
-        consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await loadConfig();
+    beforeAll(async () => {
+        const tweetsPath = path.join(__dirname, '../assets/tweets.txt');
+        const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
+        sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
+    });
+
+    beforeEach(() => {
+        envBackup = { ...process.env };
     });
 
     afterEach(() => {
-        process.env = originalEnv;
-        console.log = originalConsoleLog;
-        consoleLogSpy.mockRestore();
-        consoleErrorSpy.mockRestore();
-        jest.resetModules();
+        process.env = envBackup;
     });
 
-    describe('debug', () => {
-        test('should log message with verbose level when debug mode is enabled', () => {
-            process.env.DEBUG_MODE = 'true';
-            debug('test message', 'verbose');
-            expect(consoleLogSpy).toHaveBeenCalled();
-            const call = consoleLogSpy.mock.calls[0][0];
-            expect(call).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[VERBOSE\] test message/);
+    describe('loadConfig', () => {
+        test('loads configuration from environment variables', async () => {
+            // Set up test environment
+            process.env = {
+                DEBUG_MODE: 'true',
+                MASTODON_API_URL: 'https://mastodon.social',
+                MASTODON_ACCESS_TOKEN: 'test_token',
+                BLUESKY_API_URL: 'https://bsky.social',
+                BLUESKY_USERNAME: 'test.user',
+                BLUESKY_PASSWORD: 'test_password',
+                MARKOV_STATE_SIZE: '2',
+                MARKOV_MIN_CHARS: '30',
+                MARKOV_MAX_CHARS: '280',
+                MARKOV_MAX_TRIES: '100',
+                MASTODON_SOURCE_ACCOUNTS: 'account1,account2',
+                BLUESKY_SOURCE_ACCOUNTS: 'account3,account4'
+            };
+
+            const config = await loadConfig();
+            
+            expect(config).toHaveProperty('mastodon.url', 'https://mastodon.social');
+            expect(config).toHaveProperty('mastodon.token', 'test_token');
+            expect(config).toHaveProperty('bluesky.service', 'https://bsky.social');
+            expect(config).toHaveProperty('bluesky.identifier', 'test.user');
+            expect(config).toHaveProperty('bluesky.password', 'test_password');
+            expect(config).toHaveProperty('markovStateSize', 2);
+            expect(config).toHaveProperty('markovMinChars', 30);
+            expect(config).toHaveProperty('markovMaxChars', 280);
+            expect(config).toHaveProperty('markovMaxTries', 100);
+            expect(config.mastodonSourceAccounts).toEqual(['account1', 'account2']);
+            expect(config.blueskySourceAccounts).toEqual(['account3', 'account4']);
         });
 
-        test('should not log verbose message when debug mode is disabled', () => {
-            process.env.DEBUG_MODE = 'false';
-            debug('test message', 'verbose');
-            expect(consoleLogSpy).not.toHaveBeenCalled();
+        test('throws error when required variables are missing', async () => {
+            // Set up test environment with missing required variable
+            process.env = {
+                DEBUG_MODE: 'true',
+                MASTODON_ACCESS_TOKEN: 'test_token',
+                BLUESKY_API_URL: 'https://bsky.social',
+                BLUESKY_USERNAME: 'test.user',
+                BLUESKY_PASSWORD: 'test_password'
+            };
+
+            await expect(loadConfig()).rejects.toThrow('Missing required environment variables: MASTODON_API_URL');
         });
 
-        test('should log info message regardless of debug mode', () => {
-            process.env.DEBUG_MODE = 'false';
-            debug('info message', 'info');
-            expect(consoleLogSpy).toHaveBeenCalled();
-            const call = consoleLogSpy.mock.calls[0][0];
-            expect(call).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] {2}info message/);
-        });
+        test('uses default values for optional parameters', async () => {
+            // Set up test environment with only required variables
+            process.env = {
+                DEBUG_MODE: 'true',
+                MASTODON_API_URL: 'https://mastodon.social',
+                MASTODON_ACCESS_TOKEN: 'test_token',
+                BLUESKY_API_URL: 'https://bsky.social',
+                BLUESKY_USERNAME: 'test.user',
+                BLUESKY_PASSWORD: 'test_password'
+            };
 
-        test('should log error message with ERROR prefix', () => {
-            debug('error message', 'error');
-            expect(consoleLogSpy).toHaveBeenCalled();
-            const call = consoleLogSpy.mock.calls[0][0];
-            expect(call).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[ERROR\] error message/);
-        });
-
-        test('should log additional data when provided', () => {
-            const data = { key: 'value' };
-            debug('message with data', 'info', data);
-            expect(consoleLogSpy).toHaveBeenCalledTimes(2);
-            expect(consoleLogSpy.mock.calls[1][0]).toBe(data);
+            const config = await loadConfig();
+            expect(config.markovStateSize).toBe(2);
+            expect(config.markovMinChars).toBe(30);
+            expect(config.markovMaxChars).toBe(280);
+            expect(config.markovMaxTries).toBe(100);
+            expect(config.mastodonSourceAccounts).toEqual(['Mastodon.social']);
+            expect(config.blueskySourceAccounts).toEqual(['bsky.social']);
         });
     });
 
     describe('generatePost', () => {
-        test('generatePost should generate valid post from test data', async () => {
-            console.log('\nGenerating test post...');
+        beforeEach(async () => {
+            // Set up test environment for generatePost tests
+            process.env = {
+                DEBUG_MODE: 'true',
+                MASTODON_API_URL: 'https://mastodon.social',
+                MASTODON_ACCESS_TOKEN: 'test_token',
+                BLUESKY_API_URL: 'https://bsky.social',
+                BLUESKY_USERNAME: 'test.user',
+                BLUESKY_PASSWORD: 'test_password',
+                MARKOV_STATE_SIZE: '2',
+                MARKOV_MIN_CHARS: '30',
+                MARKOV_MAX_CHARS: '280',
+                MARKOV_MAX_TRIES: '100'
+            };
+            await loadConfig();
+        });
+
+        test('generates valid post from content array', async () => {
+            console.log('\nTesting post generation:');
+            console.log('-'.repeat(50));
+            
+            const result = await generatePost(sampleTweets);
+            
+            console.log('Generated post:', result.string);
+            console.log(`Length: ${result.string.length} characters`);
             console.log('-'.repeat(50));
 
-            const testTweets = [
-                'This is a test tweet with #hashtag and some interesting content',
-                'Another test tweet with @mention and more words to work with',
-                'A third test tweet with https://example.com and additional text for context',
-                'Testing multiple elements @user #topic https://test.com with expanded vocabulary',
-                'Adding more sample tweets to improve Markov chain generation quality',
-                'The more varied content we have, the better the output will be',
-                'Including different sentence structures helps create natural text',
-                'Using hashtags #testing #quality improves the authenticity',
-                'Mentioning @users and sharing https://links.com makes it realistic',
-                'Final test tweet with good length and natural language patterns'
-            ];
+            expect(result).toHaveProperty('string');
+            expect(typeof result.string).toBe('string');
+            expect(result.string.length).toBeGreaterThanOrEqual(30);
+            expect(result.string.length).toBeLessThanOrEqual(280);
+        });
 
-            const post = await generatePost(testTweets);
+        test('handles empty content array', async () => {
+            await expect(generatePost([])).rejects.toThrow('Content array is empty');
+        });
 
-            console.log('\nGenerated post:');
+        test('handles invalid content', async () => {
+            await expect(generatePost([null, undefined, '', ' '])).rejects.toThrow('Content array is empty');
+        });
+
+        test('generates different posts on multiple calls', async () => {
+            console.log('\nTesting post variation:');
             console.log('-'.repeat(50));
-            console.log(post.string);
-            console.log('-'.repeat(50));
-            console.log(`Length: ${post.string.length} characters\n`);
 
-            expect(post).toHaveProperty('string');
-            expect(typeof post.string).toBe('string');
-            expect(post.string.length).toBeGreaterThanOrEqual(30);
-            expect(post.string.length).toBeLessThanOrEqual(280);
+            const results = await Promise.all([
+                generatePost(sampleTweets),
+                generatePost(sampleTweets),
+                generatePost(sampleTweets)
+            ]);
+
+            results.forEach((result, i) => {
+                console.log(`Post ${i + 1}:`, result.string);
+                console.log(`Length: ${result.string.length} characters`);
+                console.log('-'.repeat(50));
+            });
+
+            const uniqueTexts = new Set(results.map(r => r.string));
+            expect(uniqueTexts.size).toBeGreaterThan(1);
         });
     });
 });

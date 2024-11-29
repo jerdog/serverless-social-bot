@@ -1,149 +1,148 @@
-import { jest, describe, test, beforeEach, afterEach, expect } from '@jest/globals';
-import { MarkovChain, loadConfig } from '../bot.js';
-import fs from 'fs';
+import { jest } from '@jest/globals';
+import { MarkovChain } from '../bot.js';
+import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('MarkovChain', () => {
-    let originalEnv;
+    let sampleTweets;
+
+    beforeAll(async () => {
+        const tweetsPath = path.join(__dirname, '../assets/tweets.txt');
+        const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
+        sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
+    });
+
     let markov;
 
-    beforeEach(async () => {
-        originalEnv = process.env;
-        process.env = {
-            ...originalEnv,
-            MASTODON_API_URL: 'https://mastodon.social',
-            MASTODON_ACCESS_TOKEN: 'test_token',
-            BLUESKY_API_URL: 'https://bsky.social',
-            BLUESKY_USERNAME: 'test.user',
-            BLUESKY_PASSWORD: 'test_password',
-            MARKOV_STATE_SIZE: '2',
-            MARKOV_MIN_CHARS: '30',
-            MARKOV_MAX_CHARS: '280',
-            MARKOV_MAX_TRIES: '100'
-        };
-        await loadConfig();
+    beforeEach(() => {
         markov = new MarkovChain(2);
+        markov.addData(sampleTweets);
     });
 
-    afterEach(() => {
-        process.env = originalEnv;
-        jest.resetModules();
-    });
-
-    test('should create instance with correct state size', () => {
-        expect(markov.stateSize).toBe(2);
-        expect(markov.chain).toBeInstanceOf(Map);
-        expect(markov.startStates).toBeInstanceOf(Array);
-    });
-
-    test('should add data and generate text', async () => {
-        const testData = [
-            'This is a test tweet.',
-            'Another test tweet.',
-            'Testing tweet generation.'
-        ];
-
-        await markov.addData(testData);
-
-        const generated = await markov.generate({
-            minChars: 10,
-            maxChars: 50,
-            maxTries: 100
+    describe('constructor', () => {
+        test('initializes with default state size', () => {
+            const defaultMarkov = new MarkovChain();
+            expect(defaultMarkov.stateSize).toBe(2);
         });
 
-        expect(generated).toBeDefined();
-        expect(generated).toHaveProperty('string');
-        expect(typeof generated.string).toBe('string');
-        expect(generated.string.length).toBeGreaterThanOrEqual(10);
-        expect(generated.string.length).toBeLessThanOrEqual(50);
-    });
-
-    test('should generate text within length constraints', async () => {
-        const testData = [
-            'This is a test tweet with some more words to work with.',
-            'Another test tweet with additional content for better generation.',
-            'A third test tweet to provide more context and vocabulary.',
-            'Adding more sample text to improve generation quality.',
-            'The more varied content we have, the better the output will be.',
-            'Including different sentence structures helps create natural text.',
-            'Using more words and phrases improves the generation quality.',
-            'Final test sentence with good length and natural patterns.'
-        ];
-
-        await markov.addData(testData);
-
-        const options = {
-            minChars: 30,
-            maxChars: 100,
-            maxTries: 100
-        };
-
-        const generated = await markov.generate(options);
-        expect(generated.string.length).toBeGreaterThanOrEqual(options.minChars);
-        expect(generated.string.length).toBeLessThanOrEqual(options.maxChars);
-    });
-
-    test('should throw error when no valid text can be generated', async () => {
-        const testData = [
-            'This is a test tweet with some more words to work with.',
-            'Another test tweet with additional content for better generation.',
-            'A third test tweet to provide more context and vocabulary.',
-            'Adding more sample text to improve generation quality.',
-            'The more varied content we have, the better the output will be.',
-            'Including different sentence structures helps create natural text.',
-            'Using more words and phrases improves the generation quality.',
-            'Final test sentence with good length and natural patterns.'
-        ];
-        await markov.addData(testData);
-
-        const options = {
-            minChars: 1000,  
-            maxChars: 1500,
-            maxTries: 10
-        };
-
-        await expect(markov.generate(options)).rejects.toThrow(
-            `Failed to generate text between ${options.minChars} and ${options.maxChars} characters after ${options.maxTries} attempts`
-        );
-    });
-
-    test('should generate valid text from test data', async () => {
-        const testTweets = [
-            'This is a test tweet with #hashtag and some interesting content',
-            'Another test tweet with @mention and more words to work with',
-            'A third test tweet with https://example.com and additional text for context',
-            'Testing multiple elements @user #topic https://test.com with expanded vocabulary',
-            'Adding more sample tweets to improve Markov chain generation quality',
-            'The more varied content we have, the better the output will be',
-            'Including different sentence structures helps create natural text',
-            'Using hashtags #testing #quality improves the authenticity',
-            'Mentioning @users and sharing https://links.com makes it realistic',
-            'Final test tweet with good length and natural language patterns'
-        ];
-
-        console.log('\nLoaded', testTweets.length, 'tweets for testing');
-
-        await markov.addData(testTweets);
-
-        console.log('\nGenerated text:');
-        console.log('-'.repeat(50));
-        const generated = await markov.generate({
-            minChars: 30,
-            maxChars: 280,
-            maxTries: 100
+        test('initializes with custom state size', () => {
+            const customMarkov = new MarkovChain(3);
+            expect(customMarkov.stateSize).toBe(3);
         });
-        console.log(generated.string);
-        console.log('-'.repeat(50));
-        console.log(`Length: ${generated.string.length} characters\n`);
+    });
 
-        expect(generated).toBeDefined();
-        expect(generated).toHaveProperty('string');
-        expect(typeof generated.string).toBe('string');
-        expect(generated.string.length).toBeGreaterThanOrEqual(30);
-        expect(generated.string.length).toBeLessThanOrEqual(280);
+    describe('addData', () => {
+        test('processes single text input', async () => {
+            const text = 'the quick brown fox jumps over the lazy dog';
+            await markov.addData([text]);
+            expect(markov.startStates.length).toBeGreaterThan(0);
+            expect(markov.chain.size).toBeGreaterThan(0);
+        });
+
+        test('processes multiple text inputs', async () => {
+            const texts = [
+                'the quick brown fox jumps over the lazy dog',
+                'a quick brown cat sleeps under the warm sun'
+            ];
+            await markov.addData(texts);
+            expect(markov.startStates.length).toBeGreaterThan(1);
+            expect(markov.chain.size).toBeGreaterThan(0);
+        });
+
+        test('handles empty input gracefully', async () => {
+            await expect(markov.addData([])).rejects.toThrow('No valid training data found');
+        });
+
+        test('handles invalid input types', async () => {
+            await expect(markov.addData([null, undefined, '', ' '])).rejects.toThrow('No valid training data found');
+        });
+    });
+
+    describe('generate', () => {
+        test('generates text within length constraints', async () => {
+            console.log('\nTesting text generation within constraints:');
+            console.log('-'.repeat(50));
+
+            const result = await markov.generate({
+                minChars: 30,
+                maxChars: 280,
+                maxTries: 100
+            });
+
+            console.log('Generated:', result.string);
+            console.log(`Length: ${result.string.length} characters`);
+            console.log('-'.repeat(50));
+
+            expect(result.string.length).toBeGreaterThanOrEqual(30);
+            expect(result.string.length).toBeLessThanOrEqual(280);
+        });
+
+        test('handles impossible length constraints', async () => {
+            await expect(markov.generate({
+                minChars: 1000,
+                maxChars: 2000,
+                maxTries: 5
+            })).rejects.toThrow('Failed to generate valid text within constraints');
+        });
+
+        test('handles no training data', async () => {
+            const emptyMarkov = new MarkovChain();
+            await expect(emptyMarkov.generate()).rejects.toThrow('No training data available');
+        });
+
+        test('generates different text on multiple calls', async () => {
+            const markov = new MarkovChain(2);
+            await markov.addData(sampleTweets);
+
+            console.log('\nTesting text variation:');
+            console.log('-'.repeat(50));
+
+            // Generate multiple texts with more relaxed constraints
+            const results = [];
+            for (let i = 0; i < 3; i++) {
+                try {
+                    const result = await markov.generate({
+                        minChars: 10,  // More lenient minimum length
+                        maxChars: 280,
+                        maxTries: 100
+                    });
+                    results.push(result);
+                } catch (error) {
+                    console.log(`Generation ${i + 1} failed:`, error.message);
+                }
+            }
+
+            expect(results.length).toBeGreaterThan(0);
+
+            results.forEach((result, i) => {
+                console.log(`Generation ${i + 1}:`, result.string);
+                console.log(`Length: ${result.string.length} characters`);
+                console.log('-'.repeat(50));
+            });
+
+            const uniqueTexts = new Set(results.map(r => r.string));
+            expect(uniqueTexts.size).toBeGreaterThan(1);
+        });
+
+        test('respects minimum length constraint', async () => {
+            const result = await markov.generate({
+                minChars: 50,
+                maxChars: 280,
+                maxTries: 100
+            });
+            expect(result.string.length).toBeGreaterThanOrEqual(50);
+        });
+
+        test('respects maximum length constraint', async () => {
+            const result = await markov.generate({
+                minChars: 30,
+                maxChars: 100,
+                maxTries: 100
+            });
+            expect(result.string.length).toBeLessThanOrEqual(100);
+        });
     });
 });

@@ -66,7 +66,7 @@ function debug(message, level = 'info', data = null) {
 }
 
 // Configuration loader
-function loadConfig() {
+async function loadConfig() {
     try {
         debug('Loading configuration...', 'verbose');
 
@@ -131,7 +131,9 @@ function loadConfig() {
             .map(([name]) => name);
 
         if (missingVars.length > 0) {
-            throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+            const error = new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+            debug(error.message, 'error');
+            throw error;
         }
 
         CONFIG = envConfig;
@@ -224,28 +226,33 @@ class MarkovChain {
     }
 
     async addData(texts) {
-        if (!Array.isArray(texts)) {
-            throw new Error('Input must be an array of strings');
+        if (!Array.isArray(texts) || texts.length === 0) {
+            throw new Error('No valid training data found');
         }
 
-        for (const text of texts) {
-            if (typeof text !== 'string' || !text.trim()) continue;
-            
-            const words = text.trim().split(/\s+/);
-            if (words.length < this.stateSize + 1) continue;
+        const validTexts = texts.filter(text => typeof text === 'string' && text.trim().length > 0);
+        if (validTexts.length === 0) {
+            throw new Error('No valid training data found');
+        }
 
-            const startState = words.slice(0, this.stateSize).join(' ');
-            this.startStates.push(startState);
+        for (const text of validTexts) {
+            const words = text.trim().split(/\s+/);
+            if (words.length < this.stateSize) continue;
 
             for (let i = 0; i <= words.length - this.stateSize; i++) {
                 const state = words.slice(i, i + this.stateSize).join(' ');
-                const nextWord = words[i + this.stateSize] || null;
+                const nextWord = words[i + this.stateSize];
 
                 if (!this.chain.has(state)) {
                     this.chain.set(state, []);
                 }
+
                 if (nextWord) {
                     this.chain.get(state).push(nextWord);
+                }
+
+                if (i === 0) {
+                    this.startStates.push(state);
                 }
             }
         }
@@ -255,26 +262,21 @@ class MarkovChain {
         }
     }
 
-    async generate(options = {}) {
-        const {
-            maxTries = 100,
-            minChars = 100,
-            maxChars = 280
-        } = options;
-
+    async generate({ minChars = 100, maxChars = 280, maxTries = 100 } = {}) {
         for (let attempt = 0; attempt < maxTries; attempt++) {
             try {
-                const result = this._generateOnce();
+                const result = await this._generateOnce();
                 if (result.length >= minChars && result.length <= maxChars) {
-                    return { string: result }; // Return object with string property
+                    return { string: result };
                 }
             } catch (error) {
-                if (attempt === maxTries - 1) {
-                    throw new Error('Failed to generate valid text within constraints');
+                if (error.message === 'No training data available') {
+                    throw error;
                 }
+                // Continue trying if it's just a generation issue
+                continue;
             }
         }
-
         throw new Error('Failed to generate valid text within constraints');
     }
 
@@ -283,30 +285,36 @@ class MarkovChain {
             throw new Error('No training data available');
         }
 
-        const startIdx = Math.floor(Math.random() * this.startStates.length);
-        let currentState = this.startStates[startIdx];
-        let result = currentState.split(/\s+/);
-        let currentLength = currentState.length;
+        const startState = this.startStates[Math.floor(Math.random() * this.startStates.length)];
+        let currentState = startState;
+        let result = startState;
+        let usedStates = new Set([startState]);
 
-        // Generate text until we hit maxChars or can't generate more
-        while (currentLength < 280) {
-            const nextWords = this.chain.get(currentState);
-            if (!nextWords || nextWords.length === 0) break;
+        while (true) {
+            const possibleNextWords = this.chain.get(currentState);
+            if (!possibleNextWords || possibleNextWords.length === 0) {
+                break;
+            }
 
-            const nextWord = nextWords[Math.floor(Math.random() * nextWords.length)];
-            if (!nextWord) break;
+            // Shuffle possible next words to increase variation
+            const shuffledWords = [...possibleNextWords].sort(() => Math.random() - 0.5);
+            let foundNew = false;
 
-            // Check if adding the next word would exceed maxChars
-            const newLength = currentLength + 1 + nextWord.length; // +1 for space
-            if (newLength > 280) break;
+            for (const nextWord of shuffledWords) {
+                const newState = result.split(/\s+/).slice(-(this.stateSize - 1)).concat(nextWord).join(' ');
+                if (!usedStates.has(newState)) {
+                    result += ' ' + nextWord;
+                    currentState = newState;
+                    usedStates.add(newState);
+                    foundNew = true;
+                    break;
+                }
+            }
 
-            result.push(nextWord);
-            currentLength = newLength;
-            const words = result.slice(-this.stateSize);
-            currentState = words.join(' ');
+            if (!foundNew) break;
         }
 
-        return result.join(' ');
+        return result;
     }
 }
 
@@ -377,6 +385,7 @@ async function fetchRecentPosts() {
                         'Authorization': `Bearer ${blueskyToken}`
                     }
                 });
+
                 const blueskyData = await blueskyResponse.json();
                 
                 if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
@@ -496,38 +505,27 @@ async function getBlueskyDid() {
 }
 
 // Post Generation
-async function generatePost(contentArray) {
-    if (!contentArray || contentArray.length === 0) {
-        throw new Error('Content array is empty. Cannot generate Markov chain.');
+async function generatePost(content) {
+    if (!Array.isArray(content) || content.length === 0) {
+        throw new Error('Content array is empty');
     }
 
-    const cleanContent = contentArray.filter(content => 
-        typeof content === 'string' && content.trim().length > 0
-    ).map(content => content.trim());
-
-    debug(`Processing ${cleanContent.length} content items`, 'verbose');
+    const validContent = content.filter(text => typeof text === 'string' && text.trim().length > 0);
+    if (validContent.length === 0) {
+        throw new Error('Content array is empty');
+    }
 
     try {
         const markov = new MarkovChain(CONFIG.markovStateSize);
-        await markov.addData(cleanContent);
-
-        const options = {
-            maxTries: CONFIG.markovMaxTries,
+        await markov.addData(validContent);
+        return await markov.generate({
             minChars: CONFIG.markovMinChars,
-            maxChars: CONFIG.markovMaxChars
-        };
-
-        const result = await markov.generate(options);
-        debug(`Generated post length: ${result.string.length} characters`, 'verbose');
-        
-        if (!result || !result.string) {
-            throw new Error('Failed to generate valid post');
-        }
-
-        return result;
+            maxChars: CONFIG.markovMaxChars,
+            maxTries: CONFIG.markovMaxTries
+        });
     } catch (error) {
         debug(`Error generating Markov chain: ${error.message}`, 'error');
-        throw new Error(`Failed to generate post: ${error.message}`);
+        throw new Error(error.message);
     }
 }
 
