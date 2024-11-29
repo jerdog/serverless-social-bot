@@ -1,6 +1,6 @@
 {
   "name": "@jerdog/serverless-social-bot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A serverless social media bot using Markov chains",
   "type": "module",
   "engines": {
@@ -44,8 +44,15 @@
   "jest": {
     "transform": {},
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.js"],
-    "moduleFileExtensions": ["js", "json", "jsx", "node"]
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "jsx",
+      "node"
+    ]
   },
   "dependencies": {
     "node-fetch": "^3.3.2"
