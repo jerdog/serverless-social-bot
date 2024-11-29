@@ -1,5 +1,6 @@
 // Essential imports only
 import fetch from 'node-fetch';
+import { getSourceTweets } from './kv.js';
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -326,50 +327,51 @@ class MarkovChain {
 }
 
 // Content Management
-async function fetchSourceTweets() {
+async function fetchSourceTweets(env) {
     try {
-        // In worker environment, we'll need to fetch this from KV or other storage
-        const sourceTweetsResponse = await fetch('assets/source-tweets.txt');
-        if (!sourceTweetsResponse.ok) {
-            debug('Failed to fetch source tweets', 'error');
+        if (env && env.SOURCE_TWEETS) {
+            // In worker environment, fetch from KV
+            const tweets = await getSourceTweets(env);
+            if (tweets.length > 0) {
+                return tweets.map(cleanText);
+            }
+            debug('No tweets found in KV storage', 'warn');
             return [];
+        } else {
+            // Local development: try to fetch from file
+            try {
+                const sourceTweetsResponse = await fetch('assets/source-tweets.txt');
+                if (!sourceTweetsResponse.ok) {
+                    debug('Failed to fetch source tweets from file', 'error');
+                    return [];
+                }
+                const content = await sourceTweetsResponse.text();
+                return content.split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.length > 0)
+                    .map(cleanText);
+            } catch (error) {
+                debug('Error reading source tweets file:', 'error', error);
+                return [];
+            }
         }
-        const content = await sourceTweetsResponse.text();
-        return content.split('\n')
-            .map(line => line.trim())
-            .filter(line => line.length > 0)
-            .map(cleanText);
     } catch (error) {
-        debug('Error fetching source tweets', 'error', error);
+        debug('Error in fetchSourceTweets:', 'error', error);
         return [];
     }
 }
 
-async function fetchTextContent() {
-    // Fetch content from multiple sources
+async function fetchTextContent(env) {
+    // Fetch both recent posts and source tweets
     const [posts, sourceTweets] = await Promise.all([
         fetchRecentPosts(),
-        fetchSourceTweets()
+        fetchSourceTweets(env)
     ]);
 
     debug(`Fetched ${posts.length} posts from social media`, 'info');
     debug(`Fetched ${sourceTweets.length} tweets from source file`, 'info');
 
-    // Combine all content sources
-    const allContent = [...posts, ...sourceTweets];
-
-    if (allContent.length === 0) {
-        debug('No content available, using fallback content', 'info');
-        return [
-            'Hello world! This is a test post.',
-            'The quick brown fox jumps over the lazy dog.',
-            'To be, or not to be, that is the question.',
-            'All that glitters is not gold.',
-            'A journey of a thousand miles begins with a single step.'
-        ];
-    }
-
-    return allContent;
+    return [...posts, ...sourceTweets];
 }
 
 async function fetchRecentPosts() {
@@ -677,45 +679,29 @@ async function postToSocialMedia(content) {
 }
 
 // Main Execution
-async function main() {
+async function main(env) {
     try {
         // Load configuration
         CONFIG = await loadConfig();
-        
-        debug('Bot started', 'essential');
-        
-        if (CONFIG.excludedWords.length > 0) {
-            debug(`Excluding words: ${CONFIG.excludedWords.join(', ')}`, 'info');
-        }
-
-        // 30% chance to proceed with post generation
-        const shouldProceed = Math.random() < 0.3;
-        if (!shouldProceed) {
-            debug('Random check failed - skipping this run (70% probability)', 'essential');
+        if (!CONFIG) {
+            debug('Failed to load configuration', 'error');
             return;
         }
 
-        debug('Random check passed - proceeding with generation (30% probability)', 'essential');
-        
-        // Get source content
-        const sourceContent = await fetchTextContent();
-        if (!sourceContent || sourceContent.length === 0) {
-            debug('No source content available', 'error');
+        // Fetch and process text content
+        const content = await fetchTextContent(env);
+        if (!content || content.length === 0) {
+            debug('No content available for generation', 'error');
             return;
         }
 
-        // Generate post
-        const post = await generatePost(sourceContent);
-        if (!post) {
-            debug('Failed to generate valid post', 'error');
-            return;
+        // Generate and post content
+        const post = await generatePost(content);
+        if (post) {
+            await postToSocialMedia(post.string);
         }
-
-        // Post to social media
-        await postToSocialMedia(post.string);
     } catch (error) {
-        debug(`Error in main execution: ${error.message}`, 'error');
-        throw error;
+        debug('Error in main execution:', 'error', error);
     }
 }
 

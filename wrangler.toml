@@ -19,6 +19,12 @@ MARKOV_MAX_CHARS = "280"
 BLUESKY_API_URL = "https://bsky.social"  # No trailing slash
 MASTODON_API_URL = "https://hachyderm.io"  # No trailing slash
 
+# KV namespace for storing source tweets
+[[kv_namespaces]]
+binding = "SOURCE_TWEETS"
+id = "8211e674157b47f5a91c8450f2be2353"
+preview_id = "7339cc8b393c4dbdb51562eb12c3962c"  # For local development
+
 [env.dev]
 vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
 

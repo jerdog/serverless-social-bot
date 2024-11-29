@@ -37,6 +37,13 @@ Inspired by the now archived https://github.com/tommeagher/heroku_ebooks
   - Maintains natural text flow and spacing
   - Content filtering with excluded words
 
+- **Content Management**
+  - Cloudflare KV storage for source tweets
+  - Append or replace source content via API
+  - Batch processing for large datasets
+  - Content monitoring and statistics
+  - Local file fallback for development
+
 - **Smart Posting**
   - 30% random chance of posting on each run
   - Prevents timeline flooding
@@ -263,6 +270,56 @@ MARKOV_MAX_CHARS = 280
 # Debug Settings
 DEBUG_MODE = false
 DEBUG_LEVEL = "info"
+```
+
+## Source Tweet Management
+
+The bot now uses Cloudflare KV for storing source tweets, making it easy to manage your training data. You can:
+
+1. **Add New Content** (default behavior):
+```bash
+curl -X POST https://your-worker.workers.dev/upload-tweets --data-binary @new-tweets.txt
+```
+
+2. **Replace Existing Content**:
+```bash
+curl -X POST https://your-worker.workers.dev/upload-tweets \
+  -H "X-Append: false" \
+  --data-binary @new-tweets.txt
+```
+
+3. **Check Content Statistics**:
+```bash
+curl https://your-worker.workers.dev/upload-tweets
+```
+
+The system automatically:
+- Stores tweets in batches to handle KV size limits
+- Tracks the total number of stored tweets
+- Uses all available content when generating posts
+- Falls back to local file in development environment
+
+For local development, you can still use the `assets/tweets.txt` file. The bot will automatically detect the environment and use the appropriate storage method.
+
+## Cloudflare Setup
+
+1. Create a KV namespace for source tweets:
+```bash
+npx wrangler kv:namespace create source_tweets
+npx wrangler kv:namespace create source_tweets_preview --preview
+```
+
+2. Add the namespace IDs to your `wrangler.toml`:
+```toml
+[[kv_namespaces]]
+binding = "SOURCE_TWEETS"
+id = "your-namespace-id"
+preview_id = "your-preview-namespace-id"
+```
+
+3. Upload your initial source tweets:
+```bash
+curl -X POST https://your-worker.workers.dev/upload-tweets --data-binary @assets/tweets.txt
 ```
 
 ## Security Best Practices
