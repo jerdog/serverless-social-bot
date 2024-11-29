@@ -290,11 +290,13 @@ class MarkovChain {
         let currentState = startState;
         let result = startState;
         let usedStates = new Set([startState]);
+        let shouldContinue = true;
 
-        while (true) {
+        while (shouldContinue) {
             const possibleNextWords = this.chain.get(currentState);
             if (!possibleNextWords || possibleNextWords.length === 0) {
-                break;
+                shouldContinue = false;
+                continue;
             }
 
             // Shuffle possible next words to increase variation
@@ -416,11 +418,11 @@ async function fetchRecentPosts() {
         if (validPosts.length === 0) {
             debug('No posts fetched, using fallback content', 'info');
             validPosts.push(
-                "Hello world! This is a test post.",
-                "The quick brown fox jumps over the lazy dog.",
-                "To be, or not to be, that is the question.",
-                "All that glitters is not gold.",
-                "A journey of a thousand miles begins with a single step."
+                'Hello world! This is a test post.',
+                'The quick brown fox jumps over the lazy dog.',
+                'To be, or not to be, that is the question.',
+                'All that glitters is not gold.',
+                'A journey of a thousand miles begins with a single step.'
             );
         }
         
