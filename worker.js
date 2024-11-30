@@ -11,6 +11,24 @@ export default {
     // Handle HTTP requests
     async fetch(request, env) {
         try {
+            // Copy environment variables from env to process.env
+            Object.assign(process.env, {
+                MASTODON_API_URL: env.MASTODON_API_URL,
+                MASTODON_ACCESS_TOKEN: env.MASTODON_ACCESS_TOKEN,
+                BLUESKY_API_URL: env.BLUESKY_API_URL,
+                BLUESKY_USERNAME: env.BLUESKY_USERNAME,
+                BLUESKY_PASSWORD: env.BLUESKY_PASSWORD,
+                MASTODON_SOURCE_ACCOUNTS: env.MASTODON_SOURCE_ACCOUNTS,
+                BLUESKY_SOURCE_ACCOUNTS: env.BLUESKY_SOURCE_ACCOUNTS,
+                EXCLUDED_WORDS: env.EXCLUDED_WORDS,
+                DEBUG_MODE: env.DEBUG_MODE,
+                DEBUG_LEVEL: env.DEBUG_LEVEL,
+                MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE,
+                MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS,
+                MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS,
+                MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES
+            });
+
             const url = new URL(request.url);
             
             // Handle source tweets operations
@@ -38,8 +56,13 @@ export default {
 
             // Handle bot execution
             if (url.pathname === '/run') {
-                await main(env);
-                return new Response('Bot execution completed', { status: 200 });
+                if (request.method === 'POST') {
+                    console.log('Starting bot execution...');
+                    await main(env);
+                    console.log('Bot execution completed');
+                    return new Response('Bot execution completed', { status: 200 });
+                }
+                return new Response('Method not allowed', { status: 405 });
             }
 
             return new Response('Not found', { status: 404 });

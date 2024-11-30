@@ -16,8 +16,6 @@ MARKOV_STATE_SIZE = "2"
 MARKOV_MAX_TRIES = "100"
 MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
-BLUESKY_API_URL = "https://bsky.social"  # No trailing slash
-MASTODON_API_URL = "https://hachyderm.io"  # No trailing slash
 
 # KV namespace for storing source tweets
 [[kv_namespaces]]
@@ -29,9 +27,9 @@ preview_id = "7339cc8b393c4dbdb51562eb12c3962c"  # For local development
 vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
 
 # Secrets that should be set via wrangler
+# wrangler secret put MASTODON_ACCESS_TOKEN
 # wrangler secret put BLUESKY_USERNAME
 # wrangler secret put BLUESKY_PASSWORD
-# wrangler secret put MASTODON_ACCESS_TOKEN
 # wrangler secret put BLUESKY_SOURCE_ACCOUNTS
 # wrangler secret put MASTODON_SOURCE_ACCOUNTS
 # wrangler secret put EXCLUDED_WORDS

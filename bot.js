@@ -53,16 +53,22 @@ function stripHtmlTags(text) {
 // Utility Functions
 function debug(message, level = 'info', data = null) {
     const timestamp = new Date().toISOString();
-    const prefix = level === 'error' ? '[ERROR]' : level === 'verbose' ? '[VERBOSE]' : '';
+    const logMessage = `[${timestamp}] ${message}`;
     
-    // Only log verbose messages if debug mode is enabled
-    if (level === 'verbose' && process.env.DEBUG_MODE !== 'true') {
-        return;
-    }
-    
-    console.log(`[${timestamp}] ${prefix} ${message}`);
+    // Always log to console
     if (data) {
-        console.log(data);
+        console.log(logMessage, data);
+    } else {
+        console.log(logMessage);
+    }
+
+    // Additional debug logging if enabled
+    if (process.env.DEBUG_MODE === 'true') {
+        if (level === 'error') {
+            console.error(logMessage, data || '');
+        } else if (level === 'warn') {
+            console.warn(logMessage, data || '');
+        }
     }
 }
 
@@ -593,48 +599,36 @@ async function postToMastodon(content) {
 
 async function postToBluesky(content) {
     try {
-        // Get auth token
-        const token = await getBlueskyAuth();
-        if (!token) {
-            debug('Failed to authenticate with Bluesky', 'error');
-            return false;
-        }
-
-        // Get DID
         const did = await getBlueskyDid();
-        if (!did) {
-            debug('Failed to resolve Bluesky DID', 'error');
-            return false;
-        }
+        debug('Creating Bluesky post record...');
 
-        debug('Creating Bluesky post record...', 'info');
-        const createRecordResponse = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.repo.createRecord`, {
+        const postRecord = {
+            $type: 'app.bsky.feed.post',
+            text: content,
+            createdAt: new Date().toISOString()
+        };
+
+        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer ${await getBlueskyAuth()}`,
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 repo: did,
                 collection: 'app.bsky.feed.post',
-                record: {
-                    text: content,
-                    createdAt: new Date().toISOString(),
-                    $type: 'app.bsky.feed.post'
-                }
+                record: postRecord
             })
         });
 
-        const createRecordData = await createRecordResponse.json();
-        
-        if (createRecordData.error) {
-            debug(`Bluesky posting failed: ${createRecordData.error}`, 'error', createRecordData);
-            return false;
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Unknown error');
         }
 
-        debug('Successfully posted to Bluesky', 'info');
         return true;
     } catch (error) {
-        debug(`Error posting to Bluesky: ${error.message}`, 'error');
+        debug('Bluesky posting failed: ' + error.message, 'error', error);
         return false;
     }
 }
@@ -683,12 +677,20 @@ async function main(env) {
     try {
         // Load configuration
         CONFIG = await loadConfig();
-        if (!CONFIG) {
-            debug('Failed to load configuration', 'error');
+        debug('Configuration loaded', 'info', CONFIG);
+
+        // 30% chance to post
+        const randomValue = Math.random();
+        debug(`Random value generated: ${(randomValue * 100).toFixed(2)}%`, 'info');
+        
+        if (randomValue > 0.3) {
+            debug('Skipping post based on random chance (above 30% threshold)', 'info');
             return;
         }
 
-        // Fetch and process text content
+        debug('Proceeding with post (within 30% threshold)', 'info');
+
+        // Fetch content for generation
         const content = await fetchTextContent(env);
         if (!content || content.length === 0) {
             debug('No content available for generation', 'error');
