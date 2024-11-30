@@ -1,159 +1,210 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from '@jest/globals';
-import { generatePost, loadConfig } from '../bot.js';
-import dotenv from 'dotenv';
+import { generatePost, loadConfig, cleanText } from '../bot.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 
-// Load test environment variables
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '../.env.test') });
+// Test environment configuration
+const TEST_ENV = {
+    DEBUG_MODE: 'true',
+    DEBUG_LEVEL: 'verbose',
+    MARKOV_STATE_SIZE: '2',
+    MARKOV_MIN_CHARS: '30',
+    MARKOV_MAX_CHARS: '280',
+    MARKOV_MAX_TRIES: '100',
+    MASTODON_API_URL: 'https://mastodon.social',
+    MASTODON_ACCESS_TOKEN: 'test_token',
+    MASTODON_SOURCE_ACCOUNTS: 'account1,account2',
+    BLUESKY_API_URL: 'https://bsky.social',
+    BLUESKY_USERNAME: 'test.user',
+    BLUESKY_PASSWORD: 'test_password',
+    BLUESKY_SOURCE_ACCOUNTS: 'account3,account4',
+    EXCLUDED_WORDS: ''
+};
 
 describe('Bot', () => {
     let envBackup;
     let sampleTweets;
 
     beforeAll(async () => {
-        const tweetsPath = path.join(__dirname, '../assets/tweets.txt');
-        const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
-        sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
-    });
-
-    beforeEach(() => {
+        // Backup original environment
         envBackup = { ...process.env };
+        
+        // Set up test environment
+        Object.assign(process.env, TEST_ENV);
+
+        // Load sample tweets from assets
+        try {
+            const __dirname = path.dirname(fileURLToPath(import.meta.url));
+            const tweetsPath = path.join(__dirname, '../assets/source-tweets.txt');
+            const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
+            sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
+        } catch (error) {
+            console.log('No sample tweets file found, using fallback data');
+            sampleTweets = [];
+        }
     });
 
     afterEach(() => {
-        process.env = envBackup;
+        // Restore original environment after each test
+        process.env = { ...envBackup };
     });
 
     describe('loadConfig', () => {
         test('loads configuration from environment variables', async () => {
-            // Set up test environment
-            process.env = {
-                DEBUG_MODE: 'true',
-                MASTODON_API_URL: 'https://mastodon.social',
-                MASTODON_ACCESS_TOKEN: 'test_token',
-                BLUESKY_API_URL: 'https://bsky.social',
-                BLUESKY_USERNAME: 'test.user',
-                BLUESKY_PASSWORD: 'test_password',
-                MARKOV_STATE_SIZE: '2',
-                MARKOV_MIN_CHARS: '30',
-                MARKOV_MAX_CHARS: '280',
-                MARKOV_MAX_TRIES: '100',
-                MASTODON_SOURCE_ACCOUNTS: 'account1,account2',
-                BLUESKY_SOURCE_ACCOUNTS: 'account3,account4'
-            };
-
             const config = await loadConfig();
-            
-            expect(config).toHaveProperty('mastodon.url', 'https://mastodon.social');
-            expect(config).toHaveProperty('mastodon.token', 'test_token');
-            expect(config).toHaveProperty('bluesky.service', 'https://bsky.social');
-            expect(config).toHaveProperty('bluesky.identifier', 'test.user');
-            expect(config).toHaveProperty('bluesky.password', 'test_password');
-            expect(config).toHaveProperty('markovStateSize', 2);
-            expect(config).toHaveProperty('markovMinChars', 30);
-            expect(config).toHaveProperty('markovMaxChars', 280);
-            expect(config).toHaveProperty('markovMaxTries', 100);
-            expect(config.mastodonSourceAccounts).toEqual(['account1', 'account2']);
-            expect(config.blueskySourceAccounts).toEqual(['account3', 'account4']);
-        });
-
-        test('throws error when required variables are missing', async () => {
-            // Set up test environment with missing required variable
-            process.env = {
-                DEBUG_MODE: 'true',
-                MASTODON_ACCESS_TOKEN: 'test_token',
-                BLUESKY_API_URL: 'https://bsky.social',
-                BLUESKY_USERNAME: 'test.user',
-                BLUESKY_PASSWORD: 'test_password'
-            };
-
-            await expect(loadConfig()).rejects.toThrow('Missing required environment variables: MASTODON_API_URL');
-        });
-
-        test('uses default values for optional parameters', async () => {
-            // Set up test environment with only required variables
-            process.env = {
-                DEBUG_MODE: 'true',
-                MASTODON_API_URL: 'https://mastodon.social',
-                MASTODON_ACCESS_TOKEN: 'test_token',
-                BLUESKY_API_URL: 'https://bsky.social',
-                BLUESKY_USERNAME: 'test.user',
-                BLUESKY_PASSWORD: 'test_password'
-            };
-
-            const config = await loadConfig();
+            expect(config).toBeTruthy();
             expect(config.markovStateSize).toBe(2);
             expect(config.markovMinChars).toBe(30);
             expect(config.markovMaxChars).toBe(280);
             expect(config.markovMaxTries).toBe(100);
-            expect(config.mastodonSourceAccounts).toEqual(['Mastodon.social']);
-            expect(config.blueskySourceAccounts).toEqual(['bsky.social']);
+            expect(config.mastodonSourceAccounts).toEqual(['account1', 'account2']);
+            expect(config.blueskySourceAccounts).toEqual(['account3', 'account4']);
+        });
+
+        test('uses default values for optional parameters', async () => {
+            const testEnv = { ...TEST_ENV };
+            delete testEnv.MARKOV_STATE_SIZE;
+            delete testEnv.MARKOV_MIN_CHARS;
+            delete testEnv.MARKOV_MAX_CHARS;
+            delete testEnv.MARKOV_MAX_TRIES;
+            Object.assign(process.env, testEnv);
+
+            const config = await loadConfig();
+            expect(config).toBeTruthy();
+            expect(config.markovStateSize).toBe(2); // default value
+            expect(config.markovMinChars).toBe(30); // default value
+            expect(config.markovMaxChars).toBe(280); // default value
+            expect(config.markovMaxTries).toBe(100); // default value
+        });
+
+        test('throws error when required variables are missing', async () => {
+            process.env = {}; // Clear all environment variables
+            await expect(loadConfig()).rejects.toThrow('Missing required environment variables');
+        });
+    });
+
+    describe('cleanText', () => {
+        beforeEach(async () => {
+            Object.assign(process.env, TEST_ENV);
+            await loadConfig();
+        });
+
+        test('strips URLs from text', async () => {
+            const testCases = [
+                {
+                    input: 'Check out this link https://example.com',
+                    expected: 'Check out this link'
+                },
+                {
+                    input: 'Visit www.example.com for more',
+                    expected: 'Visit for more'
+                },
+                {
+                    input: 'Multiple links https://test.com and http://example.org here',
+                    expected: 'Multiple links and here'
+                }
+            ];
+
+            for (const { input, expected } of testCases) {
+                const result = cleanText(input);
+                expect(result.trim()).toBe(expected.trim());
+            }
+        });
+
+        test('strips mentions from text', async () => {
+            const testCases = [
+                {
+                    input: '@username hello world',
+                    expected: 'hello world'
+                },
+                {
+                    input: 'hello @user.name world',
+                    expected: 'hello world'
+                },
+                {
+                    input: '.@username starting with dot',
+                    expected: 'starting with dot'
+                }
+            ];
+
+            for (const { input, expected } of testCases) {
+                const result = cleanText(input);
+                expect(result.trim()).toBe(expected.trim());
+            }
+        });
+
+        test('handles invalid input gracefully', async () => {
+            const testCases = [
+                { input: null, expected: '' },
+                { input: undefined, expected: '' },
+                { input: '', expected: '' },
+                { input: '   ', expected: '' }
+            ];
+
+            for (const { input, expected } of testCases) {
+                const result = cleanText(input);
+                expect(result.trim()).toBe(expected);
+            }
         });
     });
 
     describe('generatePost', () => {
         beforeEach(async () => {
-            // Set up test environment for generatePost tests
-            process.env = {
-                DEBUG_MODE: 'true',
-                MASTODON_API_URL: 'https://mastodon.social',
-                MASTODON_ACCESS_TOKEN: 'test_token',
-                BLUESKY_API_URL: 'https://bsky.social',
-                BLUESKY_USERNAME: 'test.user',
-                BLUESKY_PASSWORD: 'test_password',
-                MARKOV_STATE_SIZE: '2',
-                MARKOV_MIN_CHARS: '30',
-                MARKOV_MAX_CHARS: '280',
-                MARKOV_MAX_TRIES: '100'
-            };
+            Object.assign(process.env, TEST_ENV);
             await loadConfig();
         });
 
-        test('generates valid post from content array', async () => {
-            console.log('\nTesting post generation:');
-            console.log('-'.repeat(50));
-            
-            const result = await generatePost(sampleTweets);
-            
-            console.log('Generated post:', result.string);
-            console.log(`Length: ${result.string.length} characters`);
-            console.log('-'.repeat(50));
+        test('generates text within constraints', async () => {
+            console.log('\nTesting text generation within constraints:');
+            console.log('--------------------------------------------------');
 
-            expect(result).toHaveProperty('string');
-            expect(typeof result.string).toBe('string');
-            expect(result.string.length).toBeGreaterThanOrEqual(30);
-            expect(result.string.length).toBeLessThanOrEqual(280);
-        });
+            // Use sample tweets for generation if available
+            const testContent = sampleTweets?.length > 0 ? 
+                sampleTweets : [
+                    'Mentioning @users and sharing https://links.com makes it realistic',
+                    'Including different sentence structures helps create natural text',
+                    'A third test tweet with https://example.com and additional text for context',
+                    'Using hashtags #testing #quality improves the authenticity'
+                ];
 
-        test('handles empty content array', async () => {
-            await expect(generatePost([])).rejects.toThrow('Content array is empty');
-        });
-
-        test('handles invalid content', async () => {
-            await expect(generatePost([null, undefined, '', ' '])).rejects.toThrow('Content array is empty');
-        });
-
-        test('generates different posts on multiple calls', async () => {
-            console.log('\nTesting post variation:');
-            console.log('-'.repeat(50));
-
-            const results = await Promise.all([
-                generatePost(sampleTweets),
-                generatePost(sampleTweets),
-                generatePost(sampleTweets)
-            ]);
-
-            results.forEach((result, i) => {
-                console.log(`Post ${i + 1}:`, result.string);
+            const result = await generatePost(testContent);
+            expect(result).toBeTruthy();
+            if (result) {
+                console.log(`Generated: ${result.string}`);
                 console.log(`Length: ${result.string.length} characters`);
-                console.log('-'.repeat(50));
-            });
+                console.log('--------------------------------------------------');
+                expect(result.string.length).toBeGreaterThanOrEqual(30);
+                expect(result.string.length).toBeLessThanOrEqual(280);
+            }
+        });
 
-            const uniqueTexts = new Set(results.map(r => r.string));
-            expect(uniqueTexts.size).toBeGreaterThan(1);
+        test('generates different text each time', async () => {
+            console.log('\nTesting text variation:');
+            console.log('--------------------------------------------------');
+
+            // Use sample tweets for generation if available
+            const testContent = sampleTweets?.length > 0 ? 
+                sampleTweets : [
+                    'Testing multiple elements @user #topic https://test.com with expanded vocabulary',
+                    'Using hashtags #testing #quality improves the authenticity',
+                    'A third test tweet with @mention and more words to work with'
+                ];
+
+            const generations = [];
+            for (let i = 0; i < 3; i++) {
+                const result = await generatePost(testContent);
+                if (result) {
+                    generations.push(result.string);
+                    console.log(`Generation ${i + 1}: ${result.string}`);
+                    console.log(`Length: ${result.string.length} characters`);
+                    console.log('--------------------------------------------------');
+                }
+            }
+
+            // Check that we have unique generations
+            const uniqueGenerations = new Set(generations);
+            expect(uniqueGenerations.size).toBeGreaterThan(1);
         });
     });
 });

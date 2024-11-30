@@ -1,5 +1,6 @@
 // Essential imports only
 import fetch from 'node-fetch';
+import { getSourceTweets } from './kv.js';
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -52,96 +53,95 @@ function stripHtmlTags(text) {
 // Utility Functions
 function debug(message, level = 'info', data = null) {
     const timestamp = new Date().toISOString();
-    const prefix = level === 'error' ? '[ERROR]' : level === 'verbose' ? '[VERBOSE]' : '';
+    const logMessage = `[${timestamp}] ${message}`;
     
-    // Only log verbose messages if debug mode is enabled
-    if (level === 'verbose' && process.env.DEBUG_MODE !== 'true') {
-        return;
-    }
-    
-    console.log(`[${timestamp}] ${prefix} ${message}`);
+    // Always log to console
     if (data) {
-        console.log(data);
+        console.log(logMessage, data);
+    } else {
+        console.log(logMessage);
+    }
+
+    // Additional debug logging if enabled
+    if (process.env.DEBUG_MODE === 'true') {
+        if (level === 'error') {
+            console.error(logMessage, data || '');
+        } else if (level === 'warn') {
+            console.warn(logMessage, data || '');
+        }
     }
 }
 
 // Configuration loader
 async function loadConfig() {
-    try {
-        debug('Loading configuration...', 'verbose');
+    const requiredVars = [
+        'MASTODON_API_URL',
+        'MASTODON_ACCESS_TOKEN',
+        'BLUESKY_API_URL',
+        'BLUESKY_USERNAME',
+        'BLUESKY_PASSWORD'
+    ];
 
-        // Load configuration from environment variables
-        const envConfig = {
-            debug: process.env.DEBUG_MODE === 'true',
-            mastodon: {
-                url: process.env.MASTODON_API_URL,
-                token: process.env.MASTODON_ACCESS_TOKEN
-            },
-            bluesky: {
-                service: process.env.BLUESKY_API_URL,
-                identifier: process.env.BLUESKY_USERNAME,
-                password: process.env.BLUESKY_PASSWORD
-            },
-            markovStateSize: parseInt(process.env.MARKOV_STATE_SIZE || '2', 10),
-            markovMinChars: parseInt(process.env.MARKOV_MIN_CHARS || '30', 10),
-            markovMaxChars: parseInt(process.env.MARKOV_MAX_CHARS || '280', 10),
-            markovMaxTries: parseInt(process.env.MARKOV_MAX_TRIES || '100', 10),
-            // Add source accounts with defaults
-            mastodonSourceAccounts: (process.env.MASTODON_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
-            blueskySourceAccounts: (process.env.BLUESKY_SOURCE_ACCOUNTS || '').split(',').filter(Boolean),
-            // Add default source accounts if none provided
-            excludedWords: (process.env.EXCLUDED_WORDS || '').split(',').filter(Boolean)
-        };
-
-        // If no source accounts provided, use some defaults
-        if (envConfig.mastodonSourceAccounts.length === 0) {
-            envConfig.mastodonSourceAccounts = ['Mastodon.social'];
-        }
-        if (envConfig.blueskySourceAccounts.length === 0) {
-            envConfig.blueskySourceAccounts = ['bsky.social'];
-        }
-
-        // Log loaded configuration (excluding sensitive data)
-        debug('Loaded configuration:', 'verbose', {
-            debug: envConfig.debug,
-            mastodon: {
-                url: envConfig.mastodon.url
-            },
-            bluesky: {
-                service: envConfig.bluesky.service,
-                identifier: envConfig.bluesky.identifier
-            },
-            markovStateSize: envConfig.markovStateSize,
-            markovMinChars: envConfig.markovMinChars,
-            markovMaxChars: envConfig.markovMaxChars,
-            markovMaxTries: envConfig.markovMaxTries
-        });
-
-        // Validate required configuration
-        const requiredVars = [
-            ['MASTODON_API_URL', envConfig.mastodon.url],
-            ['MASTODON_ACCESS_TOKEN', envConfig.mastodon.token],
-            ['BLUESKY_API_URL', envConfig.bluesky.service],
-            ['BLUESKY_USERNAME', envConfig.bluesky.identifier],
-            ['BLUESKY_PASSWORD', envConfig.bluesky.password]
-        ];
-
-        const missingVars = requiredVars
-            .filter(([_name, value]) => !value)
-            .map(([name]) => name);
-
-        if (missingVars.length > 0) {
-            const error = new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
-            debug(error.message, 'error');
-            throw error;
-        }
-
-        CONFIG = envConfig;
-        return envConfig;
-    } catch (error) {
-        debug(`Error loading configuration: ${error.message}`, 'error');
-        throw error;
+    // Check for required environment variables
+    const missingVars = requiredVars.filter(varName => !process.env[varName]);
+    if (missingVars.length > 0) {
+        throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
     }
+
+    // Parse optional numeric parameters
+    const markovStateSize = parseInt(process.env.MARKOV_STATE_SIZE || '2', 10);
+    const markovMinChars = parseInt(process.env.MARKOV_MIN_CHARS || '30', 10);
+    const markovMaxChars = parseInt(process.env.MARKOV_MAX_CHARS || '280', 10);
+    const markovMaxTries = parseInt(process.env.MARKOV_MAX_TRIES || '100', 10);
+
+    // Parse optional array parameters
+    const mastodonSourceAccounts = process.env.MASTODON_SOURCE_ACCOUNTS
+        ? process.env.MASTODON_SOURCE_ACCOUNTS.split(',').map(a => a.trim())
+        : ['Mastodon.social'];
+    
+    const blueskySourceAccounts = process.env.BLUESKY_SOURCE_ACCOUNTS
+        ? process.env.BLUESKY_SOURCE_ACCOUNTS.split(',').map(a => a.trim())
+        : ['bsky.social'];
+
+    // Parse optional string parameters
+    const excludedWords = process.env.EXCLUDED_WORDS
+        ? process.env.EXCLUDED_WORDS.split(',').map(w => w.trim())
+        : [];
+
+    // Create configuration object
+    CONFIG = {
+        debug: process.env.DEBUG_MODE === 'true',
+        mastodon: {
+            url: process.env.MASTODON_API_URL,
+            token: process.env.MASTODON_ACCESS_TOKEN
+        },
+        bluesky: {
+            service: process.env.BLUESKY_API_URL,
+            identifier: process.env.BLUESKY_USERNAME,
+            password: process.env.BLUESKY_PASSWORD
+        },
+        markovStateSize,
+        markovMinChars,
+        markovMaxChars,
+        markovMaxTries,
+        mastodonSourceAccounts,
+        blueskySourceAccounts,
+        excludedWords
+    };
+
+    debug('Configuration loaded', 'info', {
+        markovConfig: {
+            stateSize: CONFIG.markovStateSize,
+            minChars: CONFIG.markovMinChars,
+            maxChars: CONFIG.markovMaxChars,
+            maxTries: CONFIG.markovMaxTries
+        },
+        mastodonAccounts: CONFIG.mastodonSourceAccounts,
+        blueskyAccounts: CONFIG.blueskySourceAccounts,
+        excludedWords: CONFIG.excludedWords
+    });
+
+    return CONFIG;
 }
 
 // Global config object
@@ -174,7 +174,9 @@ function validateBlueskyUsername(username) {
 }
 
 function cleanText(text) {
-    if (!text || typeof text !== 'string') return '';
+    if (!text || typeof text !== 'string') {
+        return '';
+    }
 
     // First strip HTML tags
     text = stripHtmlTags(text);
@@ -189,20 +191,29 @@ function cleanText(text) {
         .replace(/\s+/g, ' ')
         .trim();
 
-    // Basic cleaning
+    // Enhanced URL and mention removal
     text = text
-        // Remove URLs
-        .replace(/(https?:\/\/[^\s]+)|(www\.[^\s]+)/g, '')
-        // Remove mentions (@username)
-        .replace(/@[\w.-]+/g, '')
-        // Remove RT prefix
-        .replace(/^RT\s+/i, '')
-        // Remove multiple spaces and trim
-        .replace(/\s+/g, ' ')
+        // Remove all common URL patterns including bare domains
+        .replace(/(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_+.~#?&//=]*)/gi, '')
+        // Remove any remaining URLs that might have unusual characters
+        .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
+        // Remove bare domains (e.g., example.com)
+        .replace(/\b[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}\b/gi, '')
+        // Remove mentions (@username) - handle various formats including dots and Unicode
+        .replace(/@[a-zA-Z0-9_\u0080-\uFFFF](?:[a-zA-Z0-9_\u0080-\uFFFF.-]*[a-zA-Z0-9_\u0080-\uFFFF])?/g, '')
+        // Remove mention prefixes (e.g., ".@username" or ". @username")
+        .replace(/(?:^|\s)\.\s*@\w+/g, '')
+        // Remove RT pattern and any following mentions
+        .replace(/^RT\b[^a-zA-Z]*(?:@\w+[^a-zA-Z]*)*/, '')
+        // Remove any remaining colons after mentions
+        .replace(/(?:^|\s)@\w+:\s*/g, ' ')
+        // Clean up punctuation and whitespace, including leading dots
+        .replace(/[:\s]+/g, ' ')
+        .replace(/^\.\s+/, '')
         .trim();
 
     // Remove excluded words
-    if (CONFIG.excludedWords.length > 0) {
+    if (CONFIG && CONFIG.excludedWords && CONFIG.excludedWords.length > 0) {
         const excludedWordsRegex = new RegExp(`\\b(${CONFIG.excludedWords.join('|')})\\b`, 'gi');
         text = text.replace(excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
     }
@@ -322,10 +333,51 @@ class MarkovChain {
 }
 
 // Content Management
-async function fetchTextContent() {
-    // In worker environment, we'll fetch content from the APIs directly
-    const posts = await fetchRecentPosts();
-    return posts.map(cleanText).filter(text => text.length > 0);
+async function fetchSourceTweets(env) {
+    try {
+        if (env && env.SOURCE_TWEETS) {
+            // In worker environment, fetch from KV
+            const tweets = await getSourceTweets(env);
+            if (tweets.length > 0) {
+                return tweets.map(cleanText);
+            }
+            debug('No tweets found in KV storage', 'warn');
+            return [];
+        } else {
+            // Local development: try to fetch from file
+            try {
+                const sourceTweetsResponse = await fetch('assets/source-tweets.txt');
+                if (!sourceTweetsResponse.ok) {
+                    debug('Failed to fetch source tweets from file', 'error');
+                    return [];
+                }
+                const content = await sourceTweetsResponse.text();
+                return content.split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.length > 0)
+                    .map(cleanText);
+            } catch (error) {
+                debug('Error reading source tweets file:', 'error', error);
+                return [];
+            }
+        }
+    } catch (error) {
+        debug('Error in fetchSourceTweets:', 'error', error);
+        return [];
+    }
+}
+
+async function fetchTextContent(env) {
+    // Fetch both recent posts and source tweets
+    const [posts, sourceTweets] = await Promise.all([
+        fetchRecentPosts(),
+        fetchSourceTweets(env)
+    ]);
+
+    debug(`Fetched ${posts.length} posts from social media`, 'info');
+    debug(`Fetched ${sourceTweets.length} tweets from source file`, 'info');
+
+    return [...posts, ...sourceTweets];
 }
 
 async function fetchRecentPosts() {
@@ -341,9 +393,9 @@ async function fetchRecentPosts() {
 
         try {
             // Fetch from Mastodon
-            const mastodonResponse = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/timelines/public`, {
+            const mastodonResponse = await fetch(`${CONFIG.mastodon.url}/api/v1/timelines/public`, {
                 headers: {
-                    'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
+                    'Authorization': `Bearer ${CONFIG.mastodon.token}`,
                     'Accept': 'application/json'
                 }
             });
@@ -382,7 +434,7 @@ async function fetchRecentPosts() {
                 debug('Skipping Bluesky fetch due to authentication failure', 'error');
             } else {
                 // Fetch from Bluesky
-                const blueskyResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/app.bsky.feed.getTimeline`, {
+                const blueskyResponse = await fetch(`${CONFIG.bluesky.service}/xrpc/app.bsky.feed.getTimeline`, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${blueskyToken}`
@@ -437,25 +489,25 @@ async function fetchRecentPosts() {
 async function getBlueskyAuth() {
     try {
         debug('Authenticating with Bluesky...', 'verbose');
-        debug(`Using Bluesky username: ${CONFIG.blueskyUsername}`, 'verbose');
+        debug(`Using Bluesky username: ${CONFIG.bluesky.identifier}`, 'verbose');
         
         // Validate credentials
-        if (!CONFIG.blueskyUsername || !CONFIG.blueskyPassword) {
+        if (!CONFIG.bluesky.identifier || !CONFIG.bluesky.password) {
             throw new Error('Missing Bluesky credentials');
         }
         
-        if (!validateBlueskyUsername(CONFIG.blueskyUsername)) {
+        if (!validateBlueskyUsername(CONFIG.bluesky.identifier)) {
             throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
         }
 
         const authData = {
-            'identifier': CONFIG.blueskyUsername,
-            'password': CONFIG.blueskyPassword
+            'identifier': CONFIG.bluesky.identifier,
+            'password': CONFIG.bluesky.password
         };
 
         debug('Sending Bluesky auth request...', 'verbose', authData);
 
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.server.createSession`, {
+        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.server.createSession`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -486,7 +538,7 @@ async function getBlueskyAuth() {
 
 async function getBlueskyDid() {
     try {
-        const response = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.blueskyUsername}`, {
+        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.bluesky.identifier}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -499,7 +551,7 @@ async function getBlueskyDid() {
             return null;
         }
 
-        debug(`Resolved DID for ${CONFIG.blueskyUsername}: ${data.did}`, 'info');
+        debug(`Resolved DID for ${CONFIG.bluesky.identifier}: ${data.did}`, 'info');
         return data.did;
     } catch (error) {
         debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
@@ -534,10 +586,10 @@ async function generatePost(content) {
 
 // Social Media Integration
 async function postToMastodon(content) {
-    const response = await fetch(`${CONFIG.mastodonApiUrl}/api/v1/statuses`, {
+    const response = await fetch(`${CONFIG.mastodon.url}/api/v1/statuses`, {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${CONFIG.mastodonAccessToken}`,
+            'Authorization': `Bearer ${CONFIG.mastodon.token}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: content })
@@ -547,49 +599,36 @@ async function postToMastodon(content) {
 
 async function postToBluesky(content) {
     try {
-        // Get auth token
-        const token = await getBlueskyAuth();
-        if (!token) {
-            debug('Failed to authenticate with Bluesky', 'error');
-            return false;
-        }
-
-        // Get DID
         const did = await getBlueskyDid();
-        if (!did) {
-            debug('Failed to resolve Bluesky DID', 'error');
-            return false;
-        }
+        debug('Creating Bluesky post record...');
 
-        debug('Creating Bluesky post record...', 'info');
-        const createRecordResponse = await fetch(`${CONFIG.blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
+        const postRecord = {
+            $type: 'app.bsky.feed.post',
+            text: content,
+            createdAt: new Date().toISOString()
+        };
+
+        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`,
+                'Authorization': `Bearer ${await getBlueskyAuth()}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 repo: did,
                 collection: 'app.bsky.feed.post',
-                record: {
-                    text: content,
-                    createdAt: new Date().toISOString(),
-                    $type: 'app.bsky.feed.post'
-                }
+                record: postRecord
             })
         });
 
-        const createRecordData = await createRecordResponse.json();
-        
-        if (createRecordData.error) {
-            debug(`Bluesky posting failed: ${createRecordData.error}`, 'error', createRecordData);
-            return false;
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Unknown error');
         }
 
-        debug('Successfully posted to Bluesky', 'info');
         return true;
     } catch (error) {
-        debug(`Error posting to Bluesky: ${error.message}`, 'error');
+        debug('Bluesky posting failed: ' + error.message, 'error', error);
         return false;
     }
 }
@@ -634,47 +673,39 @@ async function postToSocialMedia(content) {
 }
 
 // Main Execution
-async function main() {
+async function main(env) {
     try {
         // Load configuration
         CONFIG = await loadConfig();
-        
-        debug('Bot started', 'essential');
-        
-        if (CONFIG.excludedWords.length > 0) {
-            debug(`Excluding words: ${CONFIG.excludedWords.join(', ')}`, 'info');
-        }
+        debug('Configuration loaded', 'info', CONFIG);
 
-        // 30% chance to proceed with post generation
-        const shouldProceed = Math.random() < 0.3;
-        if (!shouldProceed) {
-            debug('Random check failed - skipping this run (70% probability)', 'essential');
+        // 30% chance to post
+        const randomValue = Math.random();
+        debug(`Random value generated: ${(randomValue * 100).toFixed(2)}%`, 'info');
+        
+        if (randomValue > 0.3) {
+            debug('Skipping post based on random chance (above 30% threshold)', 'info');
             return;
         }
 
-        debug('Random check passed - proceeding with generation (30% probability)', 'essential');
-        
-        // Get source content
-        const sourceContent = await fetchTextContent();
-        if (!sourceContent || sourceContent.length === 0) {
-            debug('No source content available', 'error');
+        debug('Proceeding with post (within 30% threshold)', 'info');
+
+        // Fetch content for generation
+        const content = await fetchTextContent(env);
+        if (!content || content.length === 0) {
+            debug('No content available for generation', 'error');
             return;
         }
 
-        // Generate post
-        const post = await generatePost(sourceContent);
-        if (!post) {
-            debug('Failed to generate valid post', 'error');
-            return;
+        // Generate and post content
+        const post = await generatePost(content);
+        if (post) {
+            await postToSocialMedia(post.string);
         }
-
-        // Post to social media
-        await postToSocialMedia(post.string);
     } catch (error) {
-        debug(`Error in main execution: ${error.message}`, 'error');
-        throw error;
+        debug('Error in main execution:', 'error', error);
     }
 }
 
 // Export for worker
-export { debug, main, MarkovChain, generatePost, loadConfig };
+export { debug, main, MarkovChain, generatePost, loadConfig, cleanText };
