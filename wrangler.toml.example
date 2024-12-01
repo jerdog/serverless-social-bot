@@ -10,22 +10,22 @@ compatibility_date = "2024-11-06"
 # Configure your Workers environment
 [vars]
 # Example environment variables (DO NOT put actual values here)
-MASTODON_URL = "https://mastodon.example.com"
+MASTODON_API_URL = "https://mastodon.example.com"
 MASTODON_ACCESS_TOKEN = "your_mastodon_token"
-BLUESKY_SERVICE = "https://bsky.social"
-BLUESKY_IDENTIFIER = "your.handle.bsky.social"
-BLUESKY_APP_PASSWORD = "your_app_password"
+BLUESKY_API_URL = "https://bsky.social"
+BLUESKY_USERNAME = "your.handle.bsky.social"
+BLUESKY_PASSWORD = "your_app_password"
 DEBUG_MODE = "false"
 
 # Development environment variables
 [env.development]
 name = "serverless-social-bot-dev"
-vars = { DEBUG_MODE = "true" }
+vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
 
 # Production environment variables
 [env.production]
-name = "serverless-social-bot"
-vars = { DEBUG_MODE = "false" }
+name = "<YOUR_WORKER_NAME>" # UPDATE WITH YOUR WORKER NAME
+vars = { DEBUG_MODE = "false", DEBUG_LEVEL = "verbose" }
 
 # Customize the build process if needed
 [build]

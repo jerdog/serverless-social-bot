@@ -16,6 +16,8 @@ MARKOV_STATE_SIZE = "2"
 MARKOV_MAX_TRIES = "100"
 MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
+MASTODON_API_URL = "https://hachyderm.io"
+BLUESKY_API_URL = "https://bsky.social"
 
 # KV namespace for storing source tweets
 [[kv_namespaces]]
