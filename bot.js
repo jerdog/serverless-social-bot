@@ -129,7 +129,7 @@ async function loadConfig() {
         excludedWords
     };
 
-// Duplicate logging
+    // Duplicate logging
     // debug('Configuration loaded', 'info', {
     //     markovConfig: {
     //         stateSize: CONFIG.markovStateSize,
