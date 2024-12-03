@@ -155,7 +155,7 @@ function validateBlueskyUsername(username) {
         return false;
     }
     
-    debug(`Validating Bluesky username: ${username}`, 'verbose');
+    // debug(`Validating Bluesky username: ${username}`, 'verbose');
     
     // Remove any leading @ if present
     username = username.replace(/^@/, '');
