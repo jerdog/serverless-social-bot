@@ -11,7 +11,7 @@ export default {
     // Handle HTTP requests
     async fetch(request, env) {
         try {
-            // debug('Variables loaded:', 'info', env);
+            debug('Variables loaded:', 'info', env);
             
             // Copy environment variables from env to process.env
             process.env = {

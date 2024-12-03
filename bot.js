@@ -129,17 +129,18 @@ async function loadConfig() {
         excludedWords
     };
 
-    debug('Configuration loaded', 'info', {
-        markovConfig: {
-            stateSize: CONFIG.markovStateSize,
-            minChars: CONFIG.markovMinChars,
-            maxChars: CONFIG.markovMaxChars,
-            maxTries: CONFIG.markovMaxTries
-        },
-        mastodonAccounts: CONFIG.mastodonSourceAccounts,
-        blueskyAccounts: CONFIG.blueskySourceAccounts,
-        excludedWords: CONFIG.excludedWords
-    });
+// Duplicate logging
+    // debug('Configuration loaded', 'info', {
+    //     markovConfig: {
+    //         stateSize: CONFIG.markovStateSize,
+    //         minChars: CONFIG.markovMinChars,
+    //         maxChars: CONFIG.markovMaxChars,
+    //         maxTries: CONFIG.markovMaxTries
+    //     },
+    //     mastodonAccounts: CONFIG.mastodonSourceAccounts,
+    //     blueskyAccounts: CONFIG.blueskySourceAccounts,
+    //     excludedWords: CONFIG.excludedWords
+    // });
 
     return CONFIG;
 }
@@ -374,7 +375,7 @@ async function fetchTextContent(env) {
         fetchSourceTweets(env)
     ]);
 
-    debug(`Fetched ${posts.length} posts from social media`, 'info');
+    // debug(`Fetched ${posts.length} posts from social media`, 'info');
     debug(`Fetched ${sourceTweets.length} tweets from source file`, 'info');
 
     return [...posts, ...sourceTweets];
@@ -385,11 +386,8 @@ async function fetchRecentPosts() {
         const posts = [];
         
         // Log source accounts
-        debug('Fetching posts from Bluesky accounts:', 'info');
-        CONFIG.blueskySourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
-        
-        debug('Fetching posts from Mastodon accounts:', 'info');
-        CONFIG.mastodonSourceAccounts.forEach(account => debug(`  - ${account}`, 'info'));
+        debug(`Fetching posts from Bluesky accounts:\n ${CONFIG.blueskySourceAccounts.join('\n  - ')}`, 'info');
+        debug(`Fetching posts from Mastodon accounts:\n ${CONFIG.mastodonSourceAccounts.join('\n  - ')}`, 'info');
 
         try {
             // Fetch from Mastodon
@@ -409,12 +407,12 @@ async function fetchRecentPosts() {
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {
-                debug(`Retrieved ${mastodonData.length} posts from Mastodon`, 'verbose');
+                // debug(`Retrieved ${mastodonData.length} posts from Mastodon`, 'verbose');
                 const mastodonPosts = mastodonData
                     .filter(post => post && post.content)
                     .map(post => {
                         const cleanedText = cleanText(post.content);
-                        debug(`Mastodon post: ${cleanedText}`, 'verbose');
+                        // debug(`Mastodon post: ${cleanedText}`, 'verbose');
                         return cleanedText;
                     })
                     .filter(text => text.length > 0);
@@ -444,12 +442,12 @@ async function fetchRecentPosts() {
                 const blueskyData = await blueskyResponse.json();
                 
                 if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
-                    debug(`Retrieved ${blueskyData.feed.length} posts from Bluesky`, 'verbose');
+                    // debug(`Retrieved ${blueskyData.feed.length} posts from Bluesky`, 'verbose');
                     const blueskyPosts = blueskyData.feed
                         .filter(item => item && item.post && item.post.record && item.post.record.text)
                         .map(item => {
                             const cleanedText = cleanText(item.post.record.text);
-                            debug(`Bluesky post: ${cleanedText}`, 'verbose');
+                            // debug(`Bluesky post: ${cleanedText}`, 'verbose');
                             return cleanedText;
                         })
                         .filter(text => text.length > 0);
@@ -464,7 +462,7 @@ async function fetchRecentPosts() {
         }
         
         const validPosts = posts.filter(text => text && text.length > 0);
-        debug(`Successfully fetched ${validPosts.length} total posts`, 'info');
+        debug(`Successfully fetched ${validPosts.length} total posts from social media`, 'info');
         
         // Add fallback content if no posts were fetched
         if (validPosts.length === 0) {
@@ -488,8 +486,7 @@ async function fetchRecentPosts() {
 
 async function getBlueskyAuth() {
     try {
-        debug('Authenticating with Bluesky...', 'verbose');
-        debug(`Using Bluesky username: ${CONFIG.bluesky.identifier}`, 'verbose');
+        debug(`Authenticating with Bluesky using: ${CONFIG.bluesky.identifier}`, 'verbose');
         
         // Validate credentials
         if (!CONFIG.bluesky.identifier || !CONFIG.bluesky.password) {
