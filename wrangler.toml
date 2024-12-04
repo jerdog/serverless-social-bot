@@ -26,7 +26,7 @@ id = "8211e674157b47f5a91c8450f2be2353"
 preview_id = "7339cc8b393c4dbdb51562eb12c3962c"  # For local development
 
 [env.dev]
-vars = { DEBUG_MODE = "true", DEBUG_LEVEL = "verbose" }
+vars = { DEBUG_MODE = "false", DEBUG_LEVEL = "verbose" }
 
 # Secrets that should be set via wrangler
 # wrangler secret put MASTODON_ACCESS_TOKEN
