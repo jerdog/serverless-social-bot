@@ -7,32 +7,33 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
     globalThis.process = { env: {} };
 }
 
+// Helper function to setup environment variables
+function setupEnvironment(env) {
+    process.env = {
+        ...process.env,
+        MASTODON_API_URL: env.MASTODON_API_URL || '',
+        MASTODON_ACCESS_TOKEN: env.MASTODON_ACCESS_TOKEN || '',
+        BLUESKY_API_URL: env.BLUESKY_API_URL || '',
+        BLUESKY_USERNAME: env.BLUESKY_USERNAME || '',
+        BLUESKY_PASSWORD: env.BLUESKY_PASSWORD || '',
+        MASTODON_SOURCE_ACCOUNTS: env.MASTODON_SOURCE_ACCOUNTS || '',
+        BLUESKY_SOURCE_ACCOUNTS: env.BLUESKY_SOURCE_ACCOUNTS || '',
+        EXCLUDED_WORDS: env.EXCLUDED_WORDS || '',
+        DEBUG_MODE: env.DEBUG_MODE || 'false',
+        DEBUG_LEVEL: env.DEBUG_LEVEL || 'info',
+        MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE || '2',
+        MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
+        MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
+        MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100'
+    };
+}
+
 export default {
     // Handle HTTP requests
     async fetch(request, env) {
         try {
-            // debug('Variables loaded:', 'info', env);
-            
-            // Copy environment variables from env to process.env
-            process.env = {
-                ...process.env,
-                MASTODON_API_URL: env.MASTODON_API_URL || '',
-                MASTODON_ACCESS_TOKEN: env.MASTODON_ACCESS_TOKEN || '',
-                BLUESKY_API_URL: env.BLUESKY_API_URL || '',
-                BLUESKY_USERNAME: env.BLUESKY_USERNAME || '',
-                BLUESKY_PASSWORD: env.BLUESKY_PASSWORD || '',
-                MASTODON_SOURCE_ACCOUNTS: env.MASTODON_SOURCE_ACCOUNTS || '',
-                BLUESKY_SOURCE_ACCOUNTS: env.BLUESKY_SOURCE_ACCOUNTS || '',
-                EXCLUDED_WORDS: env.EXCLUDED_WORDS || '',
-                DEBUG_MODE: env.DEBUG_MODE || 'false',
-                DEBUG_LEVEL: env.DEBUG_LEVEL || 'info',
-                MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE || '2',
-                MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
-                MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
-                MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100'
-            };
-
-            // debug('Environment variables loaded:', 'info', process.env);
+            setupEnvironment(env);
+            debug('Variables loaded:', 'info', env);
 
             const url = new URL(request.url);
             
@@ -80,6 +81,13 @@ export default {
 
     // Handle scheduled events
     async scheduled(event, env, ctx) {
-        ctx.waitUntil(main(env));
+        try {
+            setupEnvironment(env);
+            debug('Starting scheduled execution...');
+            await ctx.waitUntil(main(env));
+            debug('Scheduled execution completed');
+        } catch (error) {
+            debug('Scheduled execution error:', 'error', error);
+        }
     }
 };
