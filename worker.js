@@ -1,6 +1,7 @@
 // Import only the necessary functions
 import { main, debug } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent } from './replies.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -24,8 +25,37 @@ function setupEnvironment(env) {
         MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE || '2',
         MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
         MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
-        MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100'
+        MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
+        OPENAI_API_KEY: env.OPENAI_API_KEY || ''
     };
+}
+
+// Check for notifications on both platforms
+async function checkNotifications(env) {
+    try {
+        debug('Checking for notifications...');
+
+        // Check Mastodon notifications
+        const mastodonResponse = await fetch(`${process.env.MASTODON_API_URL}/api/v1/notifications?types[]=mention`, {
+            headers: {
+                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
+            }
+        });
+
+        if (mastodonResponse.ok) {
+            const notifications = await mastodonResponse.json();
+            for (const notification of notifications) {
+                await handleMastodonReply(notification);
+            }
+        }
+
+        // Check Bluesky notifications (to be implemented)
+        // await handleBlueskyReply();
+
+        debug('Finished checking notifications');
+    } catch (error) {
+        debug('Error checking notifications:', 'error', error);
+    }
 }
 
 export default {
@@ -61,6 +91,42 @@ export default {
                 return new Response('Method not allowed', { status: 405 });
             }
 
+            // Test reply generation
+            if (url.pathname === '/test-reply') {
+                if (request.method === 'POST') {
+                    const { postUrl, replyContent } = await request.json();
+                    if (!postUrl || !replyContent) {
+                        return new Response('Missing postUrl or replyContent in request body', { 
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    debug('Testing reply generation...', 'info', { postUrl, replyContent });
+                    
+                    // Fetch the original post content
+                    const originalPost = await fetchPostContent(postUrl);
+                    if (!originalPost) {
+                        return new Response('Failed to fetch post content', { 
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    const generatedReply = await generateReply(originalPost, replyContent);
+                    
+                    return new Response(JSON.stringify({ 
+                        postUrl,
+                        originalPost,
+                        replyContent,
+                        generatedReply
+                    }), {
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
             // Handle bot execution
             if (url.pathname === '/run') {
                 if (request.method === 'POST') {
@@ -68,6 +134,16 @@ export default {
                     await main(env);
                     debug('Bot execution completed');
                     return new Response('Bot execution completed', { status: 200 });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
+            // Handle checking notifications
+            if (url.pathname === '/check-replies') {
+                if (request.method === 'POST') {
+                    debug('Checking for replies...');
+                    await checkNotifications(env);
+                    return new Response('Notifications checked', { status: 200 });
                 }
                 return new Response('Method not allowed', { status: 405 });
             }
@@ -84,7 +160,15 @@ export default {
         try {
             setupEnvironment(env);
             debug('Starting scheduled execution...');
+            
+            // Run the main bot
             await ctx.waitUntil(main(env));
+            debug('Main execution completed');
+
+            // Check for and handle replies
+            await ctx.waitUntil(checkNotifications(env));
+            debug('Notification check completed');
+            
             debug('Scheduled execution completed');
         } catch (error) {
             debug('Scheduled execution error:', 'error', error);

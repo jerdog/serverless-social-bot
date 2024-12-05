@@ -4,12 +4,22 @@ A serverless bot that generates and posts content using Markov chain text genera
 
 ## Features
 
-- Generates unique content using Markov chain text generation
-- Posts to multiple platforms (Mastodon, Bluesky)
-- Configurable posting frequency (30% chance to post)
-- Source content management through KV storage
-- Configurable excluded words and content parameters
-- Debug mode for detailed logging
+### Content Generation
+- Generates unique social media content using Markov chains
+- Configurable parameters for content generation
+- Filters out excluded words and phrases
+- 30% random posting probability
+
+### Multi-Platform Support
+- Posts to Mastodon
+- Posts to Bluesky
+- Extensible for additional platforms
+
+### AI-Powered Reply Generation
+- Generates witty, contextual replies using ChatGPT
+- Supports both Mastodon and Bluesky post URLs
+- Test endpoint for trying replies before posting
+- Configurable response style and tone
 
 ## Configuration
 
@@ -20,6 +30,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `BLUESKY_API_URL` - Bluesky API URL (default: https://bsky.social)
 - `BLUESKY_USERNAME` - Your Bluesky username
 - `BLUESKY_PASSWORD` - Your Bluesky app password
+- `OPENAI_API_KEY` - Your OpenAI API key (required for reply generation)
 
 ### Optional Environment Variables
 
@@ -51,6 +62,7 @@ A serverless bot that generates and posts content using Markov chain text genera
    BLUESKY_SOURCE_ACCOUNTS=@user.bsky.social
    DEBUG_MODE=true
    DEBUG_LEVEL=verbose
+   OPENAI_API_KEY=your_openai_api_key
    ```
 
 3. Start the development server:
@@ -63,6 +75,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `POST /run` - Execute the bot (30% chance to post)
 - `POST /upload-tweets` - Upload source content
 - `GET /upload-tweets` - Get source content count
+- `POST /test-reply` - Test AI-powered reply generation
 
 ## Deployment
 

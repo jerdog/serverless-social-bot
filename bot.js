@@ -1,6 +1,7 @@
 // Essential imports only
 import fetch from 'node-fetch';
 import { getSourceTweets } from './kv.js';
+import { storeRecentPost } from './replies.js';
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -583,49 +584,71 @@ async function generatePost(content) {
 
 // Social Media Integration
 async function postToMastodon(content) {
-    const response = await fetch(`${CONFIG.mastodon.url}/api/v1/statuses`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${CONFIG.mastodon.token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ status: content })
-    });
-    return await response.json();
+    try {
+        const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ status: content })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to post to Mastodon: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        storeRecentPost('mastodon', data.id, content);
+        debug('Posted to Mastodon successfully');
+        return true;
+    } catch (error) {
+        debug('Error posting to Mastodon:', 'error', error);
+        return false;
+    }
 }
 
 async function postToBluesky(content) {
     try {
-        const did = await getBlueskyDid();
-        debug('Creating Bluesky post record...');
-
-        const postRecord = {
-            $type: 'app.bsky.feed.post',
-            text: content,
-            createdAt: new Date().toISOString()
-        };
+        // Get existing auth if available
+        let auth = blueskyAuth;
+        
+        // If no auth or expired, create new session
+        if (!auth) {
+            auth = await getBlueskyAuth();
+            if (!auth) {
+                throw new Error('Failed to authenticate with Bluesky');
+            }
+            blueskyAuth = auth;
+        }
 
         const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${await getBlueskyAuth()}`,
+                'Authorization': `Bearer ${auth.accessJwt}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                repo: did,
+                repo: auth.did,
                 collection: 'app.bsky.feed.post',
-                record: postRecord
+                record: {
+                    text: content,
+                    createdAt: new Date().toISOString()
+                }
             })
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Unknown error');
+            throw new Error(`Failed to post to Bluesky: ${response.statusText}`);
         }
 
+        const data = await response.json();
+        storeRecentPost('bluesky', data.uri, content);
+        debug('Posted to Bluesky successfully');
         return true;
     } catch (error) {
-        debug('Bluesky posting failed: ' + error.message, 'error', error);
+        debug('Error posting to Bluesky:', 'error', error);
+        blueskyAuth = null; // Clear auth on error
         return false;
     }
 }
