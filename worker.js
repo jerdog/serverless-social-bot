@@ -52,6 +52,7 @@ async function checkNotifications(env) {
         // Check Bluesky notifications
         const auth = await getBlueskyAuth();
         if (auth) {
+            debug('Fetching Bluesky notifications...', 'info');
             const blueskyResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications?limit=50`, {
                 headers: {
                     'Authorization': `Bearer ${auth.accessJwt}`
@@ -61,17 +62,40 @@ async function checkNotifications(env) {
             if (blueskyResponse.ok) {
                 const data = await blueskyResponse.json();
                 const notifications = data.notifications || [];
+                debug('Retrieved Bluesky notifications', 'info', { 
+                    totalCount: notifications.length,
+                    notificationTypes: notifications.map(n => n.reason).filter((v, i, a) => a.indexOf(v) === i)
+                });
                 
                 // Filter for valid reply notifications
                 const replyNotifications = notifications.filter(notif => {
+                    debug('Processing notification', 'info', {
+                        reason: notif.reason,
+                        isRead: notif.isRead,
+                        author: notif.author.handle,
+                        text: notif.record?.text?.substring(0, 50) + '...',
+                        uri: notif.uri,
+                        indexedAt: notif.indexedAt
+                    });
+
                     // Must be a reply and either unread or in debug mode
                     const isValidReply = notif.reason === 'reply' && 
                         (!notif.isRead || process.env.DEBUG_MODE === 'true');
                     
-                    if (!isValidReply) return false;
+                    if (!isValidReply) {
+                        debug('Skipping: Not a valid reply or already read', 'info', {
+                            reason: notif.reason,
+                            isRead: notif.isRead,
+                            debugMode: process.env.DEBUG_MODE
+                        });
+                        return false;
+                    }
 
                     // Don't reply to our own replies
-                    if (notif.author.did === auth.did) return false;
+                    if (notif.author.did === auth.did) {
+                        debug('Skipping: Own reply', 'info', { authorDid: notif.author.did });
+                        return false;
+                    }
 
                     // Don't reply if the post contains certain keywords
                     const excludedWords = (process.env.EXCLUDED_WORDS || '').split(',')
@@ -80,7 +104,10 @@ async function checkNotifications(env) {
                     
                     const replyText = notif.record?.text?.toLowerCase() || '';
                     if (excludedWords.some(word => replyText.includes(word))) {
-                        debug('Skipping reply containing excluded word', 'verbose', { replyText });
+                        debug('Skipping: Contains excluded word', 'info', { 
+                            replyText,
+                            excludedWords 
+                        });
                         return false;
                     }
 
@@ -88,7 +115,10 @@ async function checkNotifications(env) {
                     const replyAge = Date.now() - new Date(notif.indexedAt).getTime();
                     const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
                     if (replyAge > maxAge) {
-                        debug('Skipping old reply', 'verbose', { indexedAt: notif.indexedAt });
+                        debug('Skipping: Reply too old', 'info', { 
+                            indexedAt: notif.indexedAt,
+                            age: Math.round(replyAge / (60 * 60 * 1000)) + ' hours'
+                        });
                         return false;
                     }
 
@@ -98,27 +128,49 @@ async function checkNotifications(env) {
                         .filter(n => n.author.did === auth.did)
                         .filter(n => n.reply?.parent?.uri === threadParent);
                     
+                    debug('Thread analysis', 'info', {
+                        threadParent,
+                        ourRepliesInThread: threadReplies.length,
+                        replyText: notif.record?.text?.substring(0, 50) + '...'
+                    });
+
                     const isFirstReply = threadReplies.length === 0;
                     
                     if (isFirstReply) {
-                        // Always reply to the first interaction
-                        debug('First reply in thread, will respond', 'verbose', { threadParent });
+                        debug('First reply in thread, will respond', 'info', { 
+                            threadParent,
+                            replyText: notif.record?.text?.substring(0, 50) + '...'
+                        });
                         return true;
                     } else {
-                        // 30% chance to reply to subsequent interactions
                         const replyChance = Math.random() * 100;
                         if (replyChance > 30) {
-                            debug('Skipping subsequent reply due to random chance', 'verbose', { replyChance });
+                            debug('Skipping: Random chance for subsequent reply', 'info', { 
+                                replyChance,
+                                threadReplies: threadReplies.length
+                            });
                             return false;
                         }
-                        debug('Responding to subsequent reply', 'verbose', { replyChance });
+                        debug('Responding to subsequent reply', 'info', { 
+                            replyChance,
+                            threadReplies: threadReplies.length,
+                            replyText: notif.record?.text?.substring(0, 50) + '...'
+                        });
                         return true;
                     }
                 });
 
-                debug('Found valid replies to process', 'info', { count: replyNotifications.length });
+                debug('Reply notifications filtered', 'info', { 
+                    totalNotifications: notifications.length,
+                    validReplies: replyNotifications.length
+                });
 
                 for (const notification of replyNotifications) {
+                    debug('Processing reply notification', 'info', {
+                        author: notification.author.handle,
+                        text: notification.record?.text?.substring(0, 50) + '...',
+                        uri: notification.uri
+                    });
                     await handleBlueskyReply(notification);
                 }
 

@@ -123,9 +123,53 @@ export function getOriginalPost(platform, postId) {
     return recentPosts.get(`${platform}:${postId}`);
 }
 
+// Track rate limit state
+const rateLimitState = {
+    lastError: null,
+    backoffMinutes: 5,
+    maxBackoffMinutes: 60
+};
+
+// Fallback responses when rate limited
+const fallbackResponses = [
+    "My AI brain needs a quick nap! 😴 I'll be back with witty responses soon!",
+    "Taking a brief creative break! Check back in a bit for more banter! 🎭",
+    "Currently recharging my joke batteries! 🔋 Will be back with fresh material soon!",
+    "In a brief meditation session to expand my wit! 🧘‍♂️ Back shortly!",
+    "Temporarily out of clever responses - but I'll return with double the humor! ✨",
+    "My pun generator is cooling down! Will be back with more wordplay soon! 🎮",
+    "Taking a quick comedy workshop! Back soon with fresh material! 🎭",
+    "Briefly offline doing stand-up practice! 🎤 Return in a bit for the good stuff!"
+];
+
+function getFallbackResponse() {
+    const randomIndex = Math.floor(Math.random() * fallbackResponses.length);
+    return fallbackResponses[randomIndex];
+}
+
 // Generate a reply using ChatGPT
 export async function generateReply(originalPost, replyContent) {
     try {
+        // Check if we're currently rate limited
+        if (rateLimitState.lastError) {
+            const timeSinceError = Date.now() - rateLimitState.lastError;
+            const backoffMs = rateLimitState.backoffMinutes * 60 * 1000;
+            
+            if (timeSinceError < backoffMs) {
+                const waitMinutes = Math.ceil((backoffMs - timeSinceError) / (60 * 1000));
+                debug('Still rate limited, using fallback response', 'info', { 
+                    waitMinutes,
+                    backoffMinutes: rateLimitState.backoffMinutes
+                });
+                return getFallbackResponse();
+            } else {
+                // Reset rate limit state
+                rateLimitState.lastError = null;
+                rateLimitState.backoffMinutes = 5;
+                debug('Rate limit period expired, retrying', 'info');
+            }
+        }
+
         debug('Generating reply with ChatGPT...', 'verbose', { originalPost, replyContent });
         debug('Using API key:', 'verbose', process.env.OPENAI_API_KEY ? 'Present' : 'Missing');
         
@@ -155,6 +199,21 @@ export async function generateReply(originalPost, replyContent) {
         if (!response.ok) {
             const errorText = await response.text();
             debug('ChatGPT API error:', 'error', errorText);
+            
+            // Check for rate limit error
+            if (errorText.includes('rate limit') || response.status === 429) {
+                rateLimitState.lastError = Date.now();
+                // Double the backoff time for next attempt, up to max
+                rateLimitState.backoffMinutes = Math.min(
+                    rateLimitState.backoffMinutes * 2,
+                    rateLimitState.maxBackoffMinutes
+                );
+                debug('Rate limit hit, using fallback response', 'warn', {
+                    nextBackoffMinutes: rateLimitState.backoffMinutes
+                });
+                return getFallbackResponse();
+            }
+            
             throw new Error(`ChatGPT API error: ${response.status} ${response.statusText}`);
         }
 
@@ -167,7 +226,8 @@ export async function generateReply(originalPost, replyContent) {
         throw new Error('Invalid response from ChatGPT');
     } catch (error) {
         debug('Error generating reply with ChatGPT:', 'error', error);
-        return null;
+        // Use fallback response for any errors
+        return getFallbackResponse();
     }
 }
 
@@ -212,33 +272,45 @@ export async function handleMastodonReply(notification) {
 // Handle replies on Bluesky
 export async function handleBlueskyReply(notification) {
     try {
-        debug('Processing Bluesky notification', 'verbose', notification);
+        debug('Processing Bluesky notification for reply', 'info', {
+            author: notification.author.handle,
+            text: notification.record?.text?.substring(0, 50) + '...',
+            uri: notification.uri,
+            replyParent: notification.reply?.parent?.uri
+        });
 
         // Get auth session
         const auth = await getBlueskyAuth();
         if (!auth) {
+            debug('Failed to authenticate with Bluesky', 'error');
             throw new Error('Failed to authenticate with Bluesky');
         }
 
         // Check if this is a reply to our post
         const replyToUri = notification.reply?.parent?.uri;
         if (!replyToUri) {
-            debug('Not a reply, skipping', 'verbose');
+            debug('Not a reply, skipping', 'info', { notification });
             return;
         }
 
+        debug('Checking if reply is to our post', 'info', { replyToUri });
         const originalPost = getOriginalPost('bluesky', replyToUri);
         if (!originalPost) {
-            debug('Not a reply to our post, skipping', 'verbose');
+            debug('Not a reply to our post, skipping', 'info', { replyToUri });
             return;
         }
 
         // Get the reply content
         const replyContent = notification.record?.text;
         if (!replyContent) {
-            debug('No reply content found', 'verbose');
+            debug('No reply content found', 'info', { notification });
             return;
         }
+
+        debug('Generating reply', 'info', {
+            originalPost: originalPost.content.substring(0, 50) + '...',
+            replyContent: replyContent.substring(0, 50) + '...'
+        });
 
         // Generate a witty reply
         const reply = await generateReply(originalPost.content, replyContent);
@@ -246,6 +318,11 @@ export async function handleBlueskyReply(notification) {
             debug('Failed to generate reply', 'error');
             return;
         }
+
+        debug('Posting reply to Bluesky', 'info', {
+            reply: reply.substring(0, 50) + '...',
+            replyTo: notification.uri
+        });
 
         // Post the reply
         const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
@@ -273,10 +350,18 @@ export async function handleBlueskyReply(notification) {
 
         if (!response.ok) {
             const errorText = await response.text();
+            debug('Failed to post Bluesky reply', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorText
+            });
             throw new Error(`Failed to post Bluesky reply: ${errorText}`);
         }
 
-        debug('Successfully posted reply to Bluesky', 'info', { reply });
+        debug('Successfully posted reply to Bluesky', 'info', {
+            reply: reply.substring(0, 50) + '...',
+            replyTo: notification.uri
+        });
     } catch (error) {
         debug('Error handling Bluesky reply:', 'error', error);
     }

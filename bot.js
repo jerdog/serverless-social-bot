@@ -487,12 +487,16 @@ async function fetchRecentPosts() {
 
 async function getBlueskyAuth() {
     try {
-        debug(`Authenticating with Bluesky using: ${CONFIG.bluesky.identifier}`, 'verbose');
-        
-        // Validate credentials
-        if (!CONFIG.bluesky.identifier || !CONFIG.bluesky.password) {
-            throw new Error('Missing Bluesky credentials');
+        // Ensure config is loaded first
+        if (!CONFIG) {
+            CONFIG = await loadConfig();
         }
+
+        if (!CONFIG?.bluesky?.identifier || !CONFIG?.bluesky?.password || !CONFIG?.bluesky?.service) {
+            throw new Error('Missing Bluesky configuration');
+        }
+
+        debug(`Authenticating with Bluesky using: ${CONFIG.bluesky.identifier}`, 'verbose');
         
         if (!validateBlueskyUsername(CONFIG.bluesky.identifier)) {
             throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
@@ -503,7 +507,7 @@ async function getBlueskyAuth() {
             'password': CONFIG.bluesky.password
         };
 
-        debug('Sending Bluesky auth request...', 'verbose', authData);
+        debug('Sending Bluesky auth request...', 'verbose');
 
         const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.server.createSession`, {
             method: 'POST',
@@ -610,26 +614,26 @@ async function postToMastodon(content) {
 
 async function postToBluesky(content) {
     try {
-        // Get existing auth if available
-        let auth = blueskyAuth;
-        
-        // If no auth or expired, create new session
-        if (!auth) {
-            auth = await getBlueskyAuth();
-            if (!auth) {
-                throw new Error('Failed to authenticate with Bluesky');
-            }
-            blueskyAuth = auth;
+        // Get auth token
+        const authToken = await getBlueskyAuth();
+        if (!authToken) {
+            throw new Error('Failed to authenticate with Bluesky');
         }
 
-        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
+        // Get user DID
+        const did = await getBlueskyDid();
+        if (!did) {
+            throw new Error('Failed to get Bluesky DID');
+        }
+
+        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${auth.accessJwt}`,
+                'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                repo: auth.did,
+                repo: did,
                 collection: 'app.bsky.feed.post',
                 record: {
                     text: content,
@@ -639,7 +643,8 @@ async function postToBluesky(content) {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to post to Bluesky: ${response.statusText}`);
+            const errorData = await response.text();
+            throw new Error(`Failed to post to Bluesky: ${errorData}`);
         }
 
         const data = await response.json();
@@ -648,7 +653,6 @@ async function postToBluesky(content) {
         return true;
     } catch (error) {
         debug('Error posting to Bluesky:', 'error', error);
-        blueskyAuth = null; // Clear auth on error
         return false;
     }
 }
