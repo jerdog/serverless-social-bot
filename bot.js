@@ -487,53 +487,46 @@ async function fetchRecentPosts() {
 
 async function getBlueskyAuth() {
     try {
-        // Ensure config is loaded first
-        if (!CONFIG) {
-            CONFIG = await loadConfig();
-        }
+        debug('Authenticating with Bluesky using:', 'info', process.env.BLUESKY_USERNAME);
+        debug('Using API URL:', 'info', process.env.BLUESKY_API_URL);
 
-        if (!CONFIG?.bluesky?.identifier || !CONFIG?.bluesky?.password || !CONFIG?.bluesky?.service) {
-            throw new Error('Missing Bluesky configuration');
-        }
-
-        debug(`Authenticating with Bluesky using: ${CONFIG.bluesky.identifier}`, 'verbose');
-        
-        if (!validateBlueskyUsername(CONFIG.bluesky.identifier)) {
-            throw new Error('Invalid Bluesky username format. Should be handle.bsky.social or handle.domain.tld');
-        }
-
-        const authData = {
-            'identifier': CONFIG.bluesky.identifier,
-            'password': CONFIG.bluesky.password
-        };
-
-        debug('Sending Bluesky auth request...', 'verbose');
-
-        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.server.createSession`, {
+        debug('Sending Bluesky auth request...', 'info');
+        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.server.createSession`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify(authData)
+            body: JSON.stringify({
+                identifier: process.env.BLUESKY_USERNAME,
+                password: process.env.BLUESKY_PASSWORD
+            })
+        });
+
+        debug('Auth response status:', 'info', {
+            status: response.status,
+            statusText: response.statusText
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            debug('Bluesky authentication failed', 'error', errorData);
-            throw new Error(`Bluesky authentication error: ${errorData.message || 'Unknown error'}`);
+            const errorText = await response.text();
+            debug('Auth error:', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorText
+            });
+            throw new Error(`Authentication failed: ${errorText}`);
         }
 
         const data = await response.json();
-        if (!data || !data.accessJwt) {
-            debug('Bluesky authentication response missing access token', 'error', data);
-            return null;
-        }
+        debug('Successfully authenticated with Bluesky', 'info', {
+            did: data.did,
+            hasAccessJwt: !!data.accessJwt,
+            hasRefreshJwt: !!data.refreshJwt
+        });
 
-        debug('Successfully authenticated with Bluesky', 'verbose');
-        return data.accessJwt;
+        return data;
     } catch (error) {
-        debug(`Bluesky authentication error: ${error.message}`, 'error');
+        debug('Error authenticating with Bluesky:', 'error', error);
         return null;
     }
 }
@@ -589,22 +582,45 @@ async function generatePost(content) {
 // Social Media Integration
 async function postToMastodon(content) {
     try {
+        // Check if we're in debug mode
+        if (process.env.DEBUG_MODE === 'true') {
+            debug('Debug mode: Would post to Mastodon:', 'info', {
+                content,
+                platform: 'mastodon'
+            });
+            return true;
+        }
+
         const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ status: content })
+            body: JSON.stringify({
+                status: content,
+                visibility: 'public'
+            })
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to post to Mastodon: ${response.statusText}`);
+            const errorData = await response.text();
+            debug('Failed to post to Mastodon', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorData
+            });
+            throw new Error(`Failed to post to Mastodon: ${errorData}`);
         }
 
         const data = await response.json();
-        storeRecentPost('mastodon', data.id, content);
-        debug('Posted to Mastodon successfully');
+        debug('Post created successfully', 'info', { id: data.id });
+
+        // Store the post URL in our cache
+        const postUrl = data.url;
+        storeRecentPost('mastodon', postUrl, content);
+        debug('Post stored in cache', 'info', { url: postUrl });
+
         return true;
     } catch (error) {
         debug('Error posting to Mastodon:', 'error', error);
@@ -614,26 +630,34 @@ async function postToMastodon(content) {
 
 async function postToBluesky(content) {
     try {
+        // Check if we're in debug mode
+        if (process.env.DEBUG_MODE === 'true') {
+            debug('Debug mode: Would post to Bluesky:', 'info', {
+                content,
+                platform: 'bluesky'
+            });
+            return true;
+        }
+
         // Get auth token
-        const authToken = await getBlueskyAuth();
-        if (!authToken) {
+        const auth = await getBlueskyAuth();
+        if (!auth || !auth.accessJwt || !auth.did) {
             throw new Error('Failed to authenticate with Bluesky');
         }
 
-        // Get user DID
-        const did = await getBlueskyDid();
-        if (!did) {
-            throw new Error('Failed to get Bluesky DID');
-        }
+        debug('Posting to Bluesky', 'info', {
+            authenticated: true,
+            did: auth.did
+        });
 
-        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.repo.createRecord`, {
+        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${authToken}`,
+                'Authorization': `Bearer ${auth.accessJwt}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                repo: did,
+                repo: auth.did,
                 collection: 'app.bsky.feed.post',
                 record: {
                     text: content,
@@ -644,12 +668,21 @@ async function postToBluesky(content) {
 
         if (!response.ok) {
             const errorData = await response.text();
+            debug('Failed to post to Bluesky', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorData
+            });
             throw new Error(`Failed to post to Bluesky: ${errorData}`);
         }
 
         const data = await response.json();
+        debug('Post created successfully', 'info', { uri: data.uri });
+        
+        // Store the post in our cache
         storeRecentPost('bluesky', data.uri, content);
-        debug('Posted to Bluesky successfully');
+        debug('Post stored in cache', 'info', { uri: data.uri });
+        
         return true;
     } catch (error) {
         debug('Error posting to Bluesky:', 'error', error);

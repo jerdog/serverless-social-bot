@@ -1,7 +1,102 @@
-import { debug } from './bot.js';
+import { debug, getBlueskyAuth } from './bot.js';
 
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
+
+// Local storage for development
+class LocalStorage {
+    constructor() {
+        this.store = new Map();
+    }
+
+    async put(key, value) {
+        this.store.set(key, value);
+        return Promise.resolve();
+    }
+
+    async get(key) {
+        return Promise.resolve(this.store.get(key));
+    }
+
+    async delete(key) {
+        this.store.delete(key);
+        return Promise.resolve();
+    }
+
+    async list({ prefix }) {
+        const keys = Array.from(this.store.keys())
+            .filter(key => key.startsWith(prefix))
+            .map(name => ({ name }));
+        return Promise.resolve({ keys });
+    }
+}
+
+// KV namespace for storing posts
+let postsKV = null;
+const localStorage = new LocalStorage();
+
+// Initialize KV namespace
+export function initializeKV(kv) {
+    if (!kv) {
+        debug('No KV namespace provided, using local storage', 'warn');
+        postsKV = localStorage;
+        return;
+    }
+    
+    try {
+        // Test if the KV binding is working
+        kv.list({ prefix: 'test' }).then(() => {
+            postsKV = kv;
+            debug('Successfully initialized KV namespace', 'info');
+        }).catch(error => {
+            debug('KV namespace not available, using local storage', 'warn', error);
+            postsKV = localStorage;
+        });
+    } catch (error) {
+        debug('Error during KV initialization, using local storage', 'warn', error);
+        postsKV = localStorage;
+    }
+}
+
+// Helper to get storage
+function getStorage() {
+    if (!postsKV) {
+        debug('No storage available, initializing local storage', 'warn');
+        postsKV = localStorage;
+    }
+    return postsKV;
+}
+
+// Helper to get KV namespace
+function getKVNamespace() {
+    return getStorage();
+}
+
+async function loadRecentPostsFromKV() {
+    try {
+        const kv = getStorage();
+        if (!kv) {
+            debug('No storage available', 'warn');
+            return;
+        }
+
+        const { keys } = await kv.list({ prefix: 'post:' });
+        for (const key of keys) {
+            const post = await kv.get(key.name);
+            if (post) {
+                const [platform, postId] = key.name.replace('post:', '').split(':');
+                recentPosts.set(`${platform}:${postId}`, JSON.parse(post));
+            }
+        }
+        
+        debug('Loaded posts from storage', 'info', {
+            count: recentPosts.size,
+            keys: Array.from(recentPosts.keys())
+        });
+    } catch (error) {
+        debug('Error loading posts from storage:', 'error', error);
+    }
+}
 
 // Helper function to extract post ID from Mastodon URL
 function extractMastodonPostId(url) {
@@ -103,24 +198,85 @@ export async function fetchPostContent(postUrl) {
 }
 
 // Store a new post from our bot
-export function storeRecentPost(platform, postId, content) {
-    recentPosts.set(`${platform}:${postId}`, {
+export async function storeRecentPost(platform, postId, content) {
+    debug('Storing recent post', 'info', {
+        platform,
+        postId,
         content,
-        timestamp: Date.now()
+        cacheSize: recentPosts.size
     });
 
+    const key = `${platform}:${postId}`;
+    const post = { content, timestamp: Date.now() };
+    
+    // Store in memory
+    recentPosts.set(key, post);
+
+    // Store in storage
+    try {
+        const kv = getStorage();
+        if (kv) {
+            await kv.put(`post:${key}`, JSON.stringify(post));
+            debug('Stored post in storage', 'info', { key });
+        }
+    } catch (error) {
+        debug('Error storing post in storage:', 'error', error);
+    }
+
     // Clean up old posts (older than 24 hours)
-    const dayAgo = Date.now() - (24 * 60 * 60 * 1000);
-    for (const [key, value] of recentPosts.entries()) {
-        if (value.timestamp < dayAgo) {
+    const now = Date.now();
+    for (const [key, post] of recentPosts.entries()) {
+        if (now - post.timestamp > 24 * 60 * 60 * 1000) {
+            debug('Removing old post from cache', 'info', { key });
             recentPosts.delete(key);
+            
+            // Remove from storage
+            try {
+                const kv = getStorage();
+                if (kv) {
+                    await kv.delete(`post:${key}`);
+                    debug('Removed old post from storage', 'info', { key });
+                }
+            } catch (error) {
+                debug('Error removing post from storage:', 'error', error);
+            }
         }
     }
 }
 
 // Get the original post content
-export function getOriginalPost(platform, postId) {
-    return recentPosts.get(`${platform}:${postId}`);
+export async function getOriginalPost(platform, postId) {
+    // First try memory cache
+    const key = `${platform}:${postId}`;
+    let post = recentPosts.get(key);
+    
+    // If not in memory, try storage
+    if (!post) {
+        try {
+            const kv = getStorage();
+            if (kv) {
+                const kvPost = await kv.get(`post:${key}`);
+                if (kvPost) {
+                    post = JSON.parse(kvPost);
+                    // Add to memory cache
+                    recentPosts.set(key, post);
+                }
+            }
+        } catch (error) {
+            debug('Error getting post from storage:', 'error', error);
+        }
+    }
+
+    debug('Getting original post', 'info', {
+        platform,
+        postId,
+        key,
+        exists: !!post,
+        cacheSize: recentPosts.size,
+        cacheKeys: Array.from(recentPosts.keys())
+    });
+
+    return post;
 }
 
 // Track rate limit state
@@ -147,32 +303,14 @@ function getFallbackResponse() {
     return fallbackResponses[randomIndex];
 }
 
-// Generate a reply using ChatGPT
+// Generate a reply using OpenAI
 export async function generateReply(originalPost, replyContent) {
     try {
-        // Check if we're currently rate limited
-        if (rateLimitState.lastError) {
-            const timeSinceError = Date.now() - rateLimitState.lastError;
-            const backoffMs = rateLimitState.backoffMinutes * 60 * 1000;
-            
-            if (timeSinceError < backoffMs) {
-                const waitMinutes = Math.ceil((backoffMs - timeSinceError) / (60 * 1000));
-                debug('Still rate limited, using fallback response', 'info', { 
-                    waitMinutes,
-                    backoffMinutes: rateLimitState.backoffMinutes
-                });
-                return getFallbackResponse();
-            } else {
-                // Reset rate limit state
-                rateLimitState.lastError = null;
-                rateLimitState.backoffMinutes = 5;
-                debug('Rate limit period expired, retrying', 'info');
-            }
-        }
+        debug('Generating reply with OpenAI', 'info', {
+            originalPost,
+            replyContent
+        });
 
-        debug('Generating reply with ChatGPT...', 'verbose', { originalPost, replyContent });
-        debug('Using API key:', 'verbose', process.env.OPENAI_API_KEY ? 'Present' : 'Missing');
-        
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -180,90 +318,116 @@ export async function generateReply(originalPost, replyContent) {
                 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
             },
             body: JSON.stringify({
-                model: "gpt-4",
+                model: 'gpt-4',
                 messages: [
                     {
-                        role: "system",
-                        content: "You are a witty, funny, and slightly off-the-wall social media bot. Your responses should be engaging, humorous, and occasionally absurd, while still being relevant to the conversation. Keep responses under 280 characters."
+                        role: 'system',
+                        content: 'You are a witty social media bot that generates clever and engaging replies. Your responses should be concise, humorous, and relevant to the conversation. Avoid being controversial or offensive.'
                     },
                     {
-                        role: "user",
-                        content: `Original post: "${originalPost}"\nSomeone replied with: "${replyContent}"\nGenerate a witty and funny response that is slightly unhinged, and keep the response under 280 characters:`
+                        role: 'user',
+                        content: `Generate a witty reply to this social media conversation.\n\nOriginal post: "${originalPost}"\n\nReply to respond to: "${replyContent}"\n\nMake it clever and engaging, but keep it under 280 characters.`
                     }
                 ],
-                max_tokens: 100,
-                temperature: 0.9
+                max_tokens: 150,
+                temperature: 0.7
             })
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            debug('ChatGPT API error:', 'error', errorText);
-            
-            // Check for rate limit error
-            if (errorText.includes('rate limit') || response.status === 429) {
-                rateLimitState.lastError = Date.now();
-                // Double the backoff time for next attempt, up to max
-                rateLimitState.backoffMinutes = Math.min(
-                    rateLimitState.backoffMinutes * 2,
-                    rateLimitState.maxBackoffMinutes
-                );
-                debug('Rate limit hit, using fallback response', 'warn', {
-                    nextBackoffMinutes: rateLimitState.backoffMinutes
-                });
-                return getFallbackResponse();
-            }
-            
-            throw new Error(`ChatGPT API error: ${response.status} ${response.statusText}`);
+            throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
-        debug('ChatGPT response:', 'verbose', data);
+        let reply = data.choices[0].message.content;
         
-        if (data.choices && data.choices[0] && data.choices[0].message) {
-            return data.choices[0].message.content.trim();
+        // Remove surrounding quotes if they exist
+        reply = reply.trim();
+        if (reply.startsWith('"') && reply.endsWith('"')) {
+            reply = reply.slice(1, -1);
         }
-        throw new Error('Invalid response from ChatGPT');
+        
+        debug('Generated reply', 'info', { reply });
+        return reply;
     } catch (error) {
-        debug('Error generating reply with ChatGPT:', 'error', error);
-        // Use fallback response for any errors
-        return getFallbackResponse();
+        debug('Error generating reply:', 'error', error);
+        
+        // If we hit rate limits, use a fallback response
+        if (error.message?.includes('rate limit')) {
+            return getFallbackResponse();
+        }
+        
+        throw error;
     }
 }
 
-// Handle replies on Mastodon
+// Handle a reply on Mastodon
 export async function handleMastodonReply(notification) {
     try {
-        if (notification.type !== 'mention') return;
+        debug('Processing Mastodon reply...', 'info', notification);
 
-        const replyToId = notification.status.in_reply_to_id;
-        if (!replyToId) return;
-
-        const originalPost = getOriginalPost('mastodon', replyToId);
-        if (!originalPost) return;
-
-        const replyContent = notification.status.content;
-        const reply = await generateReply(originalPost.content, replyContent);
-
-        if (reply) {
-            const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    status: reply,
-                    in_reply_to_id: notification.status.id
-                })
+        // Check if this is a reply to our post
+        const originalPost = await getOriginalPost('mastodon', notification.status.in_reply_to_id);
+        if (!originalPost) {
+            debug('Not a reply to our post', 'info', {
+                replyToId: notification.status.in_reply_to_id,
+                recentPostsCount: recentPosts.size,
+                recentPostKeys: Array.from(recentPosts.keys())
             });
-
-            if (!response.ok) {
-                throw new Error(`Failed to post Mastodon reply: ${response.statusText}`);
-            }
-
-            debug('Successfully posted reply to Mastodon', 'info', { reply });
+            return;
         }
+
+        // Check if we've already replied to this post
+        const replyKey = `replied:mastodon:${notification.status.id}`;
+        const hasReplied = await getStorage().get(replyKey);
+        if (hasReplied) {
+            debug('Already replied to this post', 'info', { replyKey });
+            return;
+        }
+
+        // Generate the reply
+        const generatedReply = await generateReply(originalPost.content, notification.status.content);
+        if (!generatedReply) {
+            debug('Failed to generate reply');
+            return;
+        }
+
+        // In debug mode, just log what would have been posted
+        if (process.env.DEBUG_MODE === 'true') {
+            debug('Debug mode: Would reply to Mastodon post', 'info', {
+                originalPost: originalPost.content,
+                replyTo: notification.status.content,
+                generatedReply,
+                notification
+            });
+            // Still store that we "replied" to prevent duplicate debug logs
+            await getStorage().put(replyKey, 'true');
+            debug('Marked post as replied to (debug mode)', 'info', { replyKey });
+            return;
+        }
+
+        // Post the reply
+        const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                status: generatedReply,
+                in_reply_to_id: notification.status.id,
+                visibility: 'public'
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to post reply: ${response.status} ${response.statusText}`);
+        }
+
+        // Mark this post as replied to
+        await getStorage().put(replyKey, 'true');
+        debug('Successfully replied to Mastodon post', 'info', { replyKey });
+
     } catch (error) {
         debug('Error handling Mastodon reply:', 'error', error);
     }
@@ -272,60 +436,56 @@ export async function handleMastodonReply(notification) {
 // Handle replies on Bluesky
 export async function handleBlueskyReply(notification) {
     try {
-        debug('Processing Bluesky notification for reply', 'info', {
-            author: notification.author.handle,
-            text: notification.record?.text?.substring(0, 50) + '...',
-            uri: notification.uri,
-            replyParent: notification.reply?.parent?.uri
-        });
+        debug('Processing Bluesky reply...', 'info', notification);
 
-        // Get auth session
+        // Check if this is a reply to our post
+        const originalPost = await getOriginalPost('bluesky', notification.uri);
+        if (!originalPost) {
+            debug('Not a reply to our post', 'info', {
+                replyToId: notification.uri,
+                recentPostsCount: recentPosts.size,
+                recentPostKeys: Array.from(recentPosts.keys())
+            });
+            return;
+        }
+
+        // Check if we've already replied to this post
+        const replyKey = `replied:bluesky:${notification.uri}`;
+        const hasReplied = await getStorage().get(replyKey);
+        if (hasReplied) {
+            debug('Already replied to this post', 'info', { replyKey });
+            return;
+        }
+
+        // Generate the reply
+        const generatedReply = await generateReply(originalPost.content, notification.record.text);
+        if (!generatedReply) {
+            debug('Failed to generate reply');
+            return;
+        }
+
+        // In debug mode, just log what would have been posted
+        if (process.env.DEBUG_MODE === 'true') {
+            debug('Debug mode: Would reply to Bluesky post', 'info', {
+                originalPost: originalPost.content,
+                replyTo: notification.record.text,
+                generatedReply,
+                notification
+            });
+            // Still store that we "replied" to prevent duplicate debug logs
+            await getStorage().put(replyKey, 'true');
+            debug('Marked post as replied to (debug mode)', 'info', { replyKey });
+            return;
+        }
+
+        // Get auth token
         const auth = await getBlueskyAuth();
-        if (!auth) {
-            debug('Failed to authenticate with Bluesky', 'error');
+        if (!auth || !auth.accessJwt) {
             throw new Error('Failed to authenticate with Bluesky');
         }
 
-        // Check if this is a reply to our post
-        const replyToUri = notification.reply?.parent?.uri;
-        if (!replyToUri) {
-            debug('Not a reply, skipping', 'info', { notification });
-            return;
-        }
-
-        debug('Checking if reply is to our post', 'info', { replyToUri });
-        const originalPost = getOriginalPost('bluesky', replyToUri);
-        if (!originalPost) {
-            debug('Not a reply to our post, skipping', 'info', { replyToUri });
-            return;
-        }
-
-        // Get the reply content
-        const replyContent = notification.record?.text;
-        if (!replyContent) {
-            debug('No reply content found', 'info', { notification });
-            return;
-        }
-
-        debug('Generating reply', 'info', {
-            originalPost: originalPost.content.substring(0, 50) + '...',
-            replyContent: replyContent.substring(0, 50) + '...'
-        });
-
-        // Generate a witty reply
-        const reply = await generateReply(originalPost.content, replyContent);
-        if (!reply) {
-            debug('Failed to generate reply', 'error');
-            return;
-        }
-
-        debug('Posting reply to Bluesky', 'info', {
-            reply: reply.substring(0, 50) + '...',
-            replyTo: notification.uri
-        });
-
-        // Post the reply
-        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
+        // Create the post
+        const response = await fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${auth.accessJwt}`,
@@ -335,13 +495,10 @@ export async function handleBlueskyReply(notification) {
                 repo: auth.did,
                 collection: 'app.bsky.feed.post',
                 record: {
-                    text: reply,
+                    text: generatedReply,
                     reply: {
-                        root: notification.reply.root,
-                        parent: {
-                            uri: notification.uri,
-                            cid: notification.cid
-                        }
+                        root: notification.uri,
+                        parent: notification.uri
                     },
                     createdAt: new Date().toISOString()
                 }
@@ -349,20 +506,20 @@ export async function handleBlueskyReply(notification) {
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            debug('Failed to post Bluesky reply', 'error', {
-                status: response.status,
-                statusText: response.statusText,
-                error: errorText
-            });
-            throw new Error(`Failed to post Bluesky reply: ${errorText}`);
+            const errorData = await response.text();
+            throw new Error(`Failed to post reply: ${errorData}`);
         }
 
-        debug('Successfully posted reply to Bluesky', 'info', {
-            reply: reply.substring(0, 50) + '...',
-            replyTo: notification.uri
-        });
+        // Mark this post as replied to
+        await getStorage().put(replyKey, 'true');
+        debug('Successfully replied to Bluesky post', 'info', { replyKey });
+
     } catch (error) {
         debug('Error handling Bluesky reply:', 'error', error);
     }
 }
+
+// Initialize posts from storage when module loads
+loadRecentPostsFromKV().catch(error => {
+    debug('Error initializing posts from storage:', 'error', error);
+});

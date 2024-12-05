@@ -1,7 +1,7 @@
 // Import only the necessary functions
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent } from './replies.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV } from './replies.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -10,6 +10,12 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
 
 // Helper function to setup environment variables
 function setupEnvironment(env) {
+    debug('Setting up environment with:', 'info', { 
+        hasPostsKV: !!env.POSTS_KV,
+        envKeys: Object.keys(env),
+        kvBindings: Object.keys(env).filter(key => key.endsWith('_KV'))
+    });
+
     process.env = {
         ...process.env,
         MASTODON_API_URL: env.MASTODON_API_URL || '',
@@ -28,6 +34,22 @@ function setupEnvironment(env) {
         MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
         OPENAI_API_KEY: env.OPENAI_API_KEY || ''
     };
+    
+    // Initialize KV namespace
+    if (env.POSTS_KV) {
+        debug('Found POSTS_KV binding, attempting to initialize', 'info', {
+            type: typeof env.POSTS_KV,
+            methods: Object.keys(env.POSTS_KV)
+        });
+        initializeKV(env.POSTS_KV);
+    } else {
+        debug('No POSTS_KV found in env', 'warn', { 
+            availableBindings: Object.keys(env).filter(key => key.includes('KV')),
+            envType: typeof env,
+            envIsNull: env === null,
+            envIsUndefined: env === undefined
+        });
+    }
 }
 
 // Check for notifications on both platforms
@@ -51,16 +73,37 @@ async function checkNotifications(env) {
 
         // Check Bluesky notifications
         const auth = await getBlueskyAuth();
-        if (auth) {
-            debug('Fetching Bluesky notifications...', 'info');
+        if (auth && auth.accessJwt) {
+            debug('Fetching Bluesky notifications...', 'info', {
+                authenticated: true,
+                hasAccessToken: !!auth.accessJwt
+            });
+
             const blueskyResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications?limit=50`, {
                 headers: {
-                    'Authorization': `Bearer ${auth.accessJwt}`
+                    'Authorization': `Bearer ${auth.accessJwt}`,
+                    'Accept': 'application/json'
                 }
+            });
+
+            debug('Bluesky notifications response status:', 'info', {
+                status: blueskyResponse.status,
+                statusText: blueskyResponse.statusText
             });
 
             if (blueskyResponse.ok) {
                 const data = await blueskyResponse.json();
+                debug('Raw Bluesky response:', 'info', {
+                    hasNotifications: !!data.notifications,
+                    notificationCount: data.notifications?.length || 0,
+                    firstNotification: data.notifications?.[0] ? {
+                        reason: data.notifications[0].reason,
+                        isRead: data.notifications[0].isRead,
+                        author: data.notifications[0].author?.handle,
+                        text: data.notifications[0].record?.text?.substring(0, 50) + '...'
+                    } : null
+                });
+
                 const notifications = data.notifications || [];
                 debug('Retrieved Bluesky notifications', 'info', { 
                     totalCount: notifications.length,

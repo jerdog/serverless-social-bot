@@ -43,12 +43,57 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MASTODON_SOURCE_ACCOUNTS` - Mastodon accounts to source content from
 - `BLUESKY_SOURCE_ACCOUNTS` - Bluesky accounts to source content from
 - `EXCLUDED_WORDS` - Words to exclude from generated content and replies
-- `DEBUG_MODE` - Enable detailed logging (true/false)
+- `DEBUG_MODE` - When set to 'true', prevents actual posting and enables detailed logging
 - `DEBUG_LEVEL` - Debug log level (verbose/info/error)
 - `MARKOV_STATE_SIZE` - Markov chain state size (default: 2)
 - `MARKOV_MIN_CHARS` - Minimum characters in generated post (default: 100)
 - `MARKOV_MAX_CHARS` - Maximum characters in generated post (default: 280)
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
+
+## Debug Mode
+
+The bot includes a comprehensive debug mode that allows you to test functionality without actually posting to social media platforms.
+
+### Enabling Debug Mode
+
+You can enable debug mode in one of three ways:
+
+1. In `.dev.vars` for local development:
+   ```ini
+   DEBUG_MODE=true
+   ```
+
+2. In `wrangler.toml` for development and testing:
+   ```toml
+   [vars]
+   DEBUG_MODE = "true"
+   ```
+
+3. In Cloudflare Dashboard for production:
+   - Go to Workers & Pages > Your Worker > Settings > Variables
+   - Add `DEBUG_MODE` with value `true`
+
+### What Debug Mode Does
+
+When `DEBUG_MODE` is set to 'true':
+- No actual posts will be made to any platform
+- Detailed logs show what would have been posted
+- Reply tracking still works to prevent duplicate debug logs
+- All other functionality (notifications, reply generation) works normally
+
+This is useful for:
+- Testing reply generation
+- Verifying post content before going live
+- Debugging notification processing
+- Testing rate limit handling
+
+### Debug Logs
+
+With debug mode enabled, you'll see detailed logs like:
+```
+Debug mode: Would post to Bluesky: [post content]
+Debug mode: Would reply to Mastodon post: [reply content]
+```
 
 ## Local Development
 
@@ -66,7 +111,7 @@ A serverless bot that generates and posts content using Markov chain text genera
    BLUESKY_PASSWORD=your_app_password
    MASTODON_SOURCE_ACCOUNTS=@user@instance
    BLUESKY_SOURCE_ACCOUNTS=@user.bsky.social
-   DEBUG_MODE=true
+   DEBUG_MODE=true    # Start with debug mode enabled for safety
    DEBUG_LEVEL=verbose
    OPENAI_API_KEY=your_openai_api_key
    ```
