@@ -1,7 +1,7 @@
 // Import only the necessary functions
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV } from './replies.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, loadRecentPostsFromKV } from './replies.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -9,46 +9,68 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
 }
 
 // Helper function to setup environment variables
-function setupEnvironment(env) {
-    debug('Setting up environment with:', 'info', { 
-        hasPostsKV: !!env.POSTS_KV,
-        envKeys: Object.keys(env),
-        kvBindings: Object.keys(env).filter(key => key.endsWith('_KV'))
-    });
+async function setupEnvironment(env) {
+    try {
+        debug('Setting up environment with:', 'info', { 
+            hasPostsKV: !!env.POSTS_KV,
+            envKeys: Object.keys(env),
+            kvBindings: Object.keys(env).filter(key => key.endsWith('_KV'))
+        });
 
-    process.env = {
-        ...process.env,
-        MASTODON_API_URL: env.MASTODON_API_URL || '',
-        MASTODON_ACCESS_TOKEN: env.MASTODON_ACCESS_TOKEN || '',
-        BLUESKY_API_URL: env.BLUESKY_API_URL || '',
-        BLUESKY_USERNAME: env.BLUESKY_USERNAME || '',
-        BLUESKY_PASSWORD: env.BLUESKY_PASSWORD || '',
-        MASTODON_SOURCE_ACCOUNTS: env.MASTODON_SOURCE_ACCOUNTS || '',
-        BLUESKY_SOURCE_ACCOUNTS: env.BLUESKY_SOURCE_ACCOUNTS || '',
-        EXCLUDED_WORDS: env.EXCLUDED_WORDS || '',
-        DEBUG_MODE: env.DEBUG_MODE || 'false',
-        DEBUG_LEVEL: env.DEBUG_LEVEL || 'info',
-        MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE || '2',
-        MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
-        MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
-        MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
-        OPENAI_API_KEY: env.OPENAI_API_KEY || ''
-    };
-    
-    // Initialize KV namespace
-    if (env.POSTS_KV) {
-        debug('Found POSTS_KV binding, attempting to initialize', 'info', {
-            type: typeof env.POSTS_KV,
-            methods: Object.keys(env.POSTS_KV)
+        process.env = {
+            ...process.env,
+            MASTODON_API_URL: env.MASTODON_API_URL || '',
+            MASTODON_ACCESS_TOKEN: env.MASTODON_ACCESS_TOKEN || '',
+            BLUESKY_API_URL: env.BLUESKY_API_URL || '',
+            BLUESKY_USERNAME: env.BLUESKY_USERNAME || '',
+            BLUESKY_PASSWORD: env.BLUESKY_PASSWORD || '',
+            MASTODON_SOURCE_ACCOUNTS: env.MASTODON_SOURCE_ACCOUNTS || '',
+            BLUESKY_SOURCE_ACCOUNTS: env.BLUESKY_SOURCE_ACCOUNTS || '',
+            EXCLUDED_WORDS: env.EXCLUDED_WORDS || '',
+            DEBUG_MODE: env.DEBUG_MODE || 'false',
+            DEBUG_LEVEL: env.DEBUG_LEVEL || 'info',
+            MARKOV_STATE_SIZE: env.MARKOV_STATE_SIZE || '2',
+            MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
+            MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
+            MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
+            OPENAI_API_KEY: env.OPENAI_API_KEY || ''
+        };
+        
+        // Initialize KV namespace
+        if (env.POSTS_KV) {
+            debug('Found POSTS_KV binding, attempting to initialize', 'info', {
+                type: typeof env.POSTS_KV,
+                methods: Object.keys(env.POSTS_KV)
+            });
+
+            // Initialize KV first
+            await initializeKV(env.POSTS_KV);
+            debug('KV initialization complete');
+            
+            // Then load existing posts
+            debug('Loading posts from KV...');
+            await loadRecentPostsFromKV();
+            debug('Posts loaded successfully');
+        } else {
+            debug('No POSTS_KV found in env', 'warn', { 
+                availableBindings: Object.keys(env).filter(key => key.includes('KV')),
+                envType: typeof env,
+                envIsNull: env === null,
+                envIsUndefined: env === undefined
+            });
+        }
+
+        debug('Environment setup complete', 'info', {
+            env: Object.fromEntries(
+                Object.entries(process.env).filter(([key]) => !key.includes('TOKEN') && !key.includes('PASSWORD'))
+            )
         });
-        initializeKV(env.POSTS_KV);
-    } else {
-        debug('No POSTS_KV found in env', 'warn', { 
-            availableBindings: Object.keys(env).filter(key => key.includes('KV')),
-            envType: typeof env,
-            envIsNull: env === null,
-            envIsUndefined: env === undefined
+    } catch (error) {
+        debug('Error during environment setup:', 'error', {
+            error: error.message,
+            stack: error.stack
         });
+        throw error;
     }
 }
 
@@ -56,6 +78,7 @@ function setupEnvironment(env) {
 async function checkNotifications(env) {
     try {
         debug('Checking for notifications...');
+        debug('Fetching Mastodon notifications...', 'info');
 
         // Check Mastodon notifications
         const mastodonResponse = await fetch(`${process.env.MASTODON_API_URL}/api/v1/notifications?types[]=mention`, {
@@ -64,175 +87,99 @@ async function checkNotifications(env) {
             }
         });
 
-        if (mastodonResponse.ok) {
-            const notifications = await mastodonResponse.json();
-            for (const notification of notifications) {
+        debug('Mastodon notifications response status:', 'info', {
+            status: mastodonResponse.status,
+            statusText: mastodonResponse.statusText
+        });
+
+        if (!mastodonResponse.ok) {
+            debug('Failed to fetch Mastodon notifications', 'error', {
+                status: mastodonResponse.status,
+                statusText: mastodonResponse.statusText
+            });
+            return;
+        }
+
+        const mastodonNotifications = await mastodonResponse.json();
+        debug('Retrieved Mastodon notifications', 'info', {
+            totalCount: mastodonNotifications.length,
+            firstNotification: mastodonNotifications[0]
+        });
+
+        // Process each Mastodon notification
+        for (const notification of mastodonNotifications) {
+            debug('Processing Mastodon notification', 'info', {
+                type: notification.type,
+                id: notification.id,
+                status: notification.status?.content
+            });
+
+            if (notification.type === 'mention') {
                 await handleMastodonReply(notification);
             }
         }
 
-        // Check Bluesky notifications
-        const auth = await getBlueskyAuth();
-        if (auth && auth.accessJwt) {
-            debug('Fetching Bluesky notifications...', 'info', {
-                authenticated: true,
-                hasAccessToken: !!auth.accessJwt
-            });
+        // Check Bluesky notifications if configured
+        if (process.env.BLUESKY_USERNAME && process.env.BLUESKY_PASSWORD) {
+            debug('Fetching Bluesky notifications...', 'info');
+            
+            // Get Bluesky auth
+            const auth = await getBlueskyAuth();
+            if (!auth || !auth.accessJwt) {
+                debug('Failed to authenticate with Bluesky - missing access token', 'error');
+                return;
+            }
 
-            const blueskyResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications?limit=50`, {
+            // Fetch notifications using the ATP API
+            const notificationsResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications`, {
                 headers: {
                     'Authorization': `Bearer ${auth.accessJwt}`,
                     'Accept': 'application/json'
                 }
             });
 
-            debug('Bluesky notifications response status:', 'info', {
-                status: blueskyResponse.status,
-                statusText: blueskyResponse.statusText
+            if (!notificationsResponse.ok) {
+                debug('Failed to fetch Bluesky notifications', 'error', {
+                    status: notificationsResponse.status,
+                    statusText: notificationsResponse.statusText
+                });
+                return;
+            }
+
+            const blueskyData = await notificationsResponse.json();
+            const notifications = blueskyData.notifications || [];
+
+            debug('Retrieved Bluesky notifications', 'info', {
+                totalCount: notifications.length,
+                firstNotification: notifications[0]
             });
 
-            if (blueskyResponse.ok) {
-                const data = await blueskyResponse.json();
-                debug('Raw Bluesky response:', 'info', {
-                    hasNotifications: !!data.notifications,
-                    notificationCount: data.notifications?.length || 0,
-                    firstNotification: data.notifications?.[0] ? {
-                        reason: data.notifications[0].reason,
-                        isRead: data.notifications[0].isRead,
-                        author: data.notifications[0].author?.handle,
-                        text: data.notifications[0].record?.text?.substring(0, 50) + '...'
-                    } : null
+            // Process each Bluesky notification
+            for (const notification of notifications) {
+                debug('Processing Bluesky notification', 'info', {
+                    reason: notification.reason,
+                    author: notification.author?.handle,
+                    cid: notification.cid
                 });
 
-                const notifications = data.notifications || [];
-                debug('Retrieved Bluesky notifications', 'info', { 
-                    totalCount: notifications.length,
-                    notificationTypes: notifications.map(n => n.reason).filter((v, i, a) => a.indexOf(v) === i)
-                });
-                
-                // Filter for valid reply notifications
-                const replyNotifications = notifications.filter(notif => {
-                    debug('Processing notification', 'info', {
-                        reason: notif.reason,
-                        isRead: notif.isRead,
-                        author: notif.author.handle,
-                        text: notif.record?.text?.substring(0, 50) + '...',
-                        uri: notif.uri,
-                        indexedAt: notif.indexedAt
-                    });
-
-                    // Must be a reply and either unread or in debug mode
-                    const isValidReply = notif.reason === 'reply' && 
-                        (!notif.isRead || process.env.DEBUG_MODE === 'true');
-                    
-                    if (!isValidReply) {
-                        debug('Skipping: Not a valid reply or already read', 'info', {
-                            reason: notif.reason,
-                            isRead: notif.isRead,
-                            debugMode: process.env.DEBUG_MODE
-                        });
-                        return false;
-                    }
-
-                    // Don't reply to our own replies
-                    if (notif.author.did === auth.did) {
-                        debug('Skipping: Own reply', 'info', { authorDid: notif.author.did });
-                        return false;
-                    }
-
-                    // Don't reply if the post contains certain keywords
-                    const excludedWords = (process.env.EXCLUDED_WORDS || '').split(',')
-                        .map(word => word.trim().toLowerCase())
-                        .filter(word => word.length > 0);
-                    
-                    const replyText = notif.record?.text?.toLowerCase() || '';
-                    if (excludedWords.some(word => replyText.includes(word))) {
-                        debug('Skipping: Contains excluded word', 'info', { 
-                            replyText,
-                            excludedWords 
-                        });
-                        return false;
-                    }
-
-                    // Don't reply to replies older than 24 hours
-                    const replyAge = Date.now() - new Date(notif.indexedAt).getTime();
-                    const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-                    if (replyAge > maxAge) {
-                        debug('Skipping: Reply too old', 'info', { 
-                            indexedAt: notif.indexedAt,
-                            age: Math.round(replyAge / (60 * 60 * 1000)) + ' hours'
-                        });
-                        return false;
-                    }
-
-                    // Check if this is the first reply in the thread
-                    const threadParent = notif.reply?.parent?.uri;
-                    const threadReplies = notifications
-                        .filter(n => n.author.did === auth.did)
-                        .filter(n => n.reply?.parent?.uri === threadParent);
-                    
-                    debug('Thread analysis', 'info', {
-                        threadParent,
-                        ourRepliesInThread: threadReplies.length,
-                        replyText: notif.record?.text?.substring(0, 50) + '...'
-                    });
-
-                    const isFirstReply = threadReplies.length === 0;
-                    
-                    if (isFirstReply) {
-                        debug('First reply in thread, will respond', 'info', { 
-                            threadParent,
-                            replyText: notif.record?.text?.substring(0, 50) + '...'
-                        });
-                        return true;
-                    } else {
-                        const replyChance = Math.random() * 100;
-                        if (replyChance > 30) {
-                            debug('Skipping: Random chance for subsequent reply', 'info', { 
-                                replyChance,
-                                threadReplies: threadReplies.length
-                            });
-                            return false;
-                        }
-                        debug('Responding to subsequent reply', 'info', { 
-                            replyChance,
-                            threadReplies: threadReplies.length,
-                            replyText: notif.record?.text?.substring(0, 50) + '...'
-                        });
-                        return true;
-                    }
-                });
-
-                debug('Reply notifications filtered', 'info', { 
-                    totalNotifications: notifications.length,
-                    validReplies: replyNotifications.length
-                });
-
-                for (const notification of replyNotifications) {
-                    debug('Processing reply notification', 'info', {
-                        author: notification.author.handle,
-                        text: notification.record?.text?.substring(0, 50) + '...',
-                        uri: notification.uri
-                    });
+                if (notification.reason === 'reply') {
                     await handleBlueskyReply(notification);
                 }
+            }
 
-                // Mark notifications as read
-                if (replyNotifications.length > 0) {
-                    const seenAt = new Date().toISOString();
-                    await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.updateSeen`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${auth.accessJwt}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ seenAt })
-                    });
-                }
+            // Mark notifications as read
+            if (notifications.length > 0) {
+                const seenAt = new Date().toISOString();
+                await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.updateSeen`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${auth.accessJwt}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ seenAt })
+                });
             }
         }
-
-        debug('Finished checking notifications');
     } catch (error) {
         debug('Error checking notifications:', 'error', error);
     }
@@ -242,8 +189,9 @@ export default {
     // Handle HTTP requests
     async fetch(request, env) {
         try {
-            setupEnvironment(env);
-            debug('Variables loaded:', 'info', env);
+            // Initialize environment first
+            await setupEnvironment(env);
+            debug('Starting HTTP request handler...');
 
             const url = new URL(request.url);
             
@@ -338,7 +286,8 @@ export default {
     // Handle scheduled events
     async scheduled(event, env, ctx) {
         try {
-            setupEnvironment(env);
+            // Initialize environment first
+            await setupEnvironment(env);
             debug('Starting scheduled execution...');
             
             // Run the main bot

@@ -487,18 +487,27 @@ async function fetchRecentPosts() {
 
 async function getBlueskyAuth() {
     try {
-        debug('Authenticating with Bluesky using:', 'info', process.env.BLUESKY_USERNAME);
-        debug('Using API URL:', 'info', process.env.BLUESKY_API_URL);
+        const username = process.env.BLUESKY_USERNAME;
+        const password = process.env.BLUESKY_PASSWORD;
+        const apiUrl = process.env.BLUESKY_API_URL || 'https://bsky.social';
+
+        if (!username || !password) {
+            debug('Missing Bluesky credentials', 'error');
+            return null;
+        }
+
+        debug('Authenticating with Bluesky using:', 'info', username);
+        debug('Using API URL:', 'info', apiUrl);
 
         debug('Sending Bluesky auth request...', 'info');
-        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.server.createSession`, {
+        const response = await fetch(`${apiUrl}/xrpc/com.atproto.server.createSession`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                identifier: process.env.BLUESKY_USERNAME,
-                password: process.env.BLUESKY_PASSWORD
+                identifier: username,
+                password: password
             })
         });
 
@@ -508,23 +517,26 @@ async function getBlueskyAuth() {
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            debug('Auth error:', 'error', {
+            debug('Bluesky auth failed', 'error', {
                 status: response.status,
-                statusText: response.statusText,
-                error: errorText
+                statusText: response.statusText
             });
-            throw new Error(`Authentication failed: ${errorText}`);
+            return null;
         }
 
         const data = await response.json();
+        
         debug('Successfully authenticated with Bluesky', 'info', {
             did: data.did,
             hasAccessJwt: !!data.accessJwt,
             hasRefreshJwt: !!data.refreshJwt
         });
 
-        return data;
+        return {
+            did: data.did,
+            accessJwt: data.accessJwt,
+            refreshJwt: data.refreshJwt
+        };
     } catch (error) {
         debug('Error authenticating with Bluesky:', 'error', error);
         return null;
@@ -614,12 +626,22 @@ async function postToMastodon(content) {
         }
 
         const data = await response.json();
-        debug('Post created successfully', 'info', { id: data.id });
+        debug('Post created successfully', 'info', { 
+            id: data.id,
+            url: data.url
+        });
 
-        // Store the post URL in our cache
-        const postUrl = data.url;
-        storeRecentPost('mastodon', postUrl, content);
-        debug('Post stored in cache', 'info', { url: postUrl });
+        // Store the post in our cache using the numeric ID
+        try {
+            await storeRecentPost('mastodon', data.id, content);
+            debug('Post stored in cache', 'info', { 
+                id: data.id,
+                content: content.substring(0, 50) + '...'
+            });
+        } catch (error) {
+            debug('Error storing post:', 'error', error);
+            // Continue even if storage fails - we don't want to fail the post
+        }
 
         return true;
     } catch (error) {
@@ -680,8 +702,13 @@ async function postToBluesky(content) {
         debug('Post created successfully', 'info', { uri: data.uri });
         
         // Store the post in our cache
-        storeRecentPost('bluesky', data.uri, content);
-        debug('Post stored in cache', 'info', { uri: data.uri });
+        try {
+            await storeRecentPost('bluesky', data.uri, content);
+            debug('Post stored in cache', 'info', { uri: data.uri });
+        } catch (error) {
+            debug('Error storing post:', 'error', error);
+            // Continue even if storage fails - we don't want to fail the post
+        }
         
         return true;
     } catch (error) {
