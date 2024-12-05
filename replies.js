@@ -261,42 +261,64 @@ async function getOriginalPost(platform, postId) {
         cacheKeys: Array.from(recentPosts.keys())
     });
 
-    const post = recentPosts.get(key);
+    // First check memory cache
+    let post = recentPosts.get(key);
+    
+    // If not in memory, try loading from storage
     if (!post) {
-        debug('Post not found in cache', 'info', { key });
+        try {
+            const kv = getKVNamespace();
+            const storedPost = await kv.get(`post:${key}`);
+            if (storedPost) {
+                try {
+                    post = JSON.parse(storedPost);
+                    // Add back to memory cache
+                    recentPosts.set(key, post);
+                    debug('Loaded post from storage', 'info', { 
+                        key,
+                        content: post.content?.substring(0, 50)
+                    });
+                } catch (parseError) {
+                    debug('Error parsing stored post:', 'error', {
+                        error: parseError,
+                        storedPost
+                    });
+                }
+            } else {
+                debug('Post not found in storage', 'info', { key });
+            }
+        } catch (error) {
+            debug('Error loading post from storage:', 'error', error);
+        }
+    }
+
+    if (!post || !post.content) {
+        debug('Post not found in cache or storage', 'info', { 
+            key,
+            hasPost: !!post,
+            hasContent: !!(post && post.content)
+        });
         return null;
     }
 
+    debug('Found post', 'info', { 
+        key, 
+        content: post.content.substring(0, 50) + '...'
+    });
     return post.content;
-}
-
-// Track rate limit state for OpenAI
-const _rateLimitState = {
-    lastError: null,
-    backoffMinutes: 5,
-    maxBackoffMinutes: 60,
-    resetTime: null
-};
-
-// Fallback responses when rate limited
-const fallbackResponses = [
-    'Hmm, I need a moment to think about that one...',
-    'My circuits are a bit overloaded right now...',
-    'Give me a minute to process that...',
-    'Taking a quick break to cool my processors...',
-    'Sometimes even bots need a moment to reflect...',
-    'Processing... please stand by...'
-];
-
-// Get a random fallback response
-function _getFallbackResponse() {
-    const index = Math.floor(Math.random() * fallbackResponses.length);
-    return fallbackResponses[index];
 }
 
 // Generate a reply using OpenAI
 async function generateReply(originalPost, replyContent) {
     try {
+        if (!originalPost || !replyContent) {
+            debug('Missing required content for reply generation', 'error', {
+                hasOriginalPost: !!originalPost,
+                hasReplyContent: !!replyContent
+            });
+            return null;
+        }
+
         debug('Generating reply with OpenAI', 'info', {
             originalPost: originalPost?.substring(0, 100),
             replyContent: replyContent?.substring(0, 100)
@@ -378,6 +400,30 @@ Your response:`;
         debug('Error generating reply:', 'error', error);
         return null;
     }
+}
+
+// Track rate limit state for OpenAI
+const _rateLimitState = {
+    lastError: null,
+    backoffMinutes: 5,
+    maxBackoffMinutes: 60,
+    resetTime: null
+};
+
+// Fallback responses when rate limited
+const fallbackResponses = [
+    'Hmm, I need a moment to think about that one...',
+    'My circuits are a bit overloaded right now...',
+    'Give me a minute to process that...',
+    'Taking a quick break to cool my processors...',
+    'Sometimes even bots need a moment to reflect...',
+    'Processing... please stand by...'
+];
+
+// Get a random fallback response
+function _getFallbackResponse() {
+    const index = Math.floor(Math.random() * fallbackResponses.length);
+    return fallbackResponses[index];
 }
 
 // Handle a reply on Mastodon
@@ -525,13 +571,18 @@ async function handleMastodonReply(notification) {
 // Handle replies on Bluesky
 async function handleBlueskyReply(notification) {
     try {
-        debug('Processing Bluesky reply...', 'info', notification);
+        debug('Processing Bluesky reply...', notification);
 
-        // Check if this is a reply to our post
-        const originalPost = await getOriginalPost('bluesky', notification.uri);
+        // Load recent posts from storage if needed
+        if (recentPosts.size === 0) {
+            await loadRecentPostsFromKV();
+        }
+
+        // Check if this is a reply to one of our posts
+        const originalPost = await getOriginalPost('bluesky', notification.reasonSubject);
         if (!originalPost) {
             debug('Not a reply to our post', 'info', {
-                replyToId: notification.uri,
+                replyToId: notification.reasonSubject,
                 recentPostsCount: recentPosts.size,
                 recentPostKeys: Array.from(recentPosts.keys())
             });
@@ -547,7 +598,7 @@ async function handleBlueskyReply(notification) {
         }
 
         // Generate the reply
-        const generatedReply = await generateReply(originalPost.content, notification.record.text);
+        const generatedReply = await generateReply(originalPost, notification.record.text);
         if (!generatedReply) {
             debug('Failed to generate reply');
             return;
@@ -556,7 +607,7 @@ async function handleBlueskyReply(notification) {
         // In debug mode, just log what would have been posted
         if (process.env.DEBUG_MODE === 'true') {
             debug('Debug mode: Would reply to Bluesky post', 'info', {
-                originalPost: originalPost.content,
+                originalPost,
                 replyTo: notification.record.text,
                 generatedReply,
                 notification
@@ -586,8 +637,14 @@ async function handleBlueskyReply(notification) {
                 record: {
                     text: generatedReply,
                     reply: {
-                        root: notification.uri,
-                        parent: notification.uri
+                        root: {
+                            uri: notification.reasonSubject,
+                            cid: notification.record.reply?.root?.cid
+                        },
+                        parent: {
+                            uri: notification.uri,
+                            cid: notification.cid
+                        }
                     },
                     createdAt: new Date().toISOString()
                 }
@@ -596,6 +653,11 @@ async function handleBlueskyReply(notification) {
 
         if (!response.ok) {
             const errorData = await response.text();
+            debug('Error response from Bluesky:', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorData
+            });
             throw new Error(`Failed to post reply: ${errorData}`);
         }
 
