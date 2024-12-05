@@ -1,5 +1,5 @@
 // Import only the necessary functions
-import { main, debug } from './bot.js';
+import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
 import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent } from './replies.js';
 
@@ -49,8 +49,93 @@ async function checkNotifications(env) {
             }
         }
 
-        // Check Bluesky notifications (to be implemented)
-        // await handleBlueskyReply();
+        // Check Bluesky notifications
+        const auth = await getBlueskyAuth();
+        if (auth) {
+            const blueskyResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications?limit=50`, {
+                headers: {
+                    'Authorization': `Bearer ${auth.accessJwt}`
+                }
+            });
+
+            if (blueskyResponse.ok) {
+                const data = await blueskyResponse.json();
+                const notifications = data.notifications || [];
+                
+                // Filter for valid reply notifications
+                const replyNotifications = notifications.filter(notif => {
+                    // Must be a reply and either unread or in debug mode
+                    const isValidReply = notif.reason === 'reply' && 
+                        (!notif.isRead || process.env.DEBUG_MODE === 'true');
+                    
+                    if (!isValidReply) return false;
+
+                    // Don't reply to our own replies
+                    if (notif.author.did === auth.did) return false;
+
+                    // Don't reply if the post contains certain keywords
+                    const excludedWords = (process.env.EXCLUDED_WORDS || '').split(',')
+                        .map(word => word.trim().toLowerCase())
+                        .filter(word => word.length > 0);
+                    
+                    const replyText = notif.record?.text?.toLowerCase() || '';
+                    if (excludedWords.some(word => replyText.includes(word))) {
+                        debug('Skipping reply containing excluded word', 'verbose', { replyText });
+                        return false;
+                    }
+
+                    // Don't reply to replies older than 24 hours
+                    const replyAge = Date.now() - new Date(notif.indexedAt).getTime();
+                    const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+                    if (replyAge > maxAge) {
+                        debug('Skipping old reply', 'verbose', { indexedAt: notif.indexedAt });
+                        return false;
+                    }
+
+                    // Check if this is the first reply in the thread
+                    const threadParent = notif.reply?.parent?.uri;
+                    const threadReplies = notifications
+                        .filter(n => n.author.did === auth.did)
+                        .filter(n => n.reply?.parent?.uri === threadParent);
+                    
+                    const isFirstReply = threadReplies.length === 0;
+                    
+                    if (isFirstReply) {
+                        // Always reply to the first interaction
+                        debug('First reply in thread, will respond', 'verbose', { threadParent });
+                        return true;
+                    } else {
+                        // 30% chance to reply to subsequent interactions
+                        const replyChance = Math.random() * 100;
+                        if (replyChance > 30) {
+                            debug('Skipping subsequent reply due to random chance', 'verbose', { replyChance });
+                            return false;
+                        }
+                        debug('Responding to subsequent reply', 'verbose', { replyChance });
+                        return true;
+                    }
+                });
+
+                debug('Found valid replies to process', 'info', { count: replyNotifications.length });
+
+                for (const notification of replyNotifications) {
+                    await handleBlueskyReply(notification);
+                }
+
+                // Mark notifications as read
+                if (replyNotifications.length > 0) {
+                    const seenAt = new Date().toISOString();
+                    await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.updateSeen`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${auth.accessJwt}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ seenAt })
+                    });
+                }
+            }
+        }
 
         debug('Finished checking notifications');
     } catch (error) {

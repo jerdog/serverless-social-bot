@@ -18,6 +18,12 @@ A serverless bot that generates and posts content using Markov chain text genera
 ### AI-Powered Reply Generation
 - Generates witty, contextual replies using ChatGPT
 - Supports both Mastodon and Bluesky post URLs
+- Smart reply behavior:
+  - Always replies to first interaction in a thread
+  - 30% chance to reply to subsequent interactions
+  - Skips replies containing excluded words
+  - Won't reply to posts older than 24 hours
+  - Avoids replying to its own posts
 - Test endpoint for trying replies before posting
 - Configurable response style and tone
 
@@ -36,7 +42,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 
 - `MASTODON_SOURCE_ACCOUNTS` - Mastodon accounts to source content from
 - `BLUESKY_SOURCE_ACCOUNTS` - Bluesky accounts to source content from
-- `EXCLUDED_WORDS` - Words to exclude from generated content
+- `EXCLUDED_WORDS` - Words to exclude from generated content and replies
 - `DEBUG_MODE` - Enable detailed logging (true/false)
 - `DEBUG_LEVEL` - Debug log level (verbose/info/error)
 - `MARKOV_STATE_SIZE` - Markov chain state size (default: 2)
@@ -76,6 +82,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `POST /upload-tweets` - Upload source content
 - `GET /upload-tweets` - Get source content count
 - `POST /test-reply` - Test AI-powered reply generation
+- `POST /check-replies` - Check for and process new replies
 
 ## Deployment
 
@@ -105,6 +112,115 @@ A serverless bot that generates and posts content using Markov chain text genera
 - Stores source content in Cloudflare KV
 - Implements Markov chain text generation
 - Supports multiple social media platforms
+
+## Reply Behavior
+The bot uses the following criteria to determine when to reply:
+
+1. **First Interactions**
+   - Always replies to the first interaction in a thread
+   - Helps establish initial engagement
+
+2. **Subsequent Interactions**
+   - 30% chance to reply to follow-up messages
+   - Prevents excessive back-and-forth conversations
+
+3. **Content Filtering**
+   - Skips replies containing words from `EXCLUDED_WORDS`
+   - Won't reply to its own posts
+   - Ignores posts older than 24 hours
+
+4. **Debug Mode**
+   - Set `DEBUG_MODE=true` to see detailed decision logging
+   - Helpful for understanding reply behavior
+
+## Testing Guide
+
+### Testing Reply Generation
+There are several ways to test the reply functionality:
+
+1. **Using the Test Endpoint**
+   ```bash
+   # Create test-payload.json with your test data
+   {
+     "postUrl": "https://bsky.app/profile/username.bsky.social/post/postid",
+     "replyContent": "Your test reply content here"
+   }
+
+   # Test reply generation
+   curl -X POST http://127.0.0.1:8787/test-reply \
+     -H "Content-Type: application/json" \
+     --data-binary "@test-payload.json"
+   ```
+
+2. **Testing Live Reply Behavior**
+   ```bash
+   # First, make the bot post something
+   curl -X POST http://127.0.0.1:8787/run
+
+   # Then reply to that post from another account
+   
+   # Finally, trigger reply checking
+   curl -X POST http://127.0.0.1:8787/check-replies
+   ```
+
+3. **Debug Mode Testing**
+   ```bash
+   # Enable debug mode in .dev.vars
+   DEBUG_MODE=true
+   DEBUG_LEVEL=verbose
+
+   # Run the reply checker to see detailed logs
+   curl -X POST http://127.0.0.1:8787/check-replies
+   ```
+
+### Testing Different Scenarios
+
+1. **First Reply Testing**
+   - Post something from the bot
+   - Reply to it from another account
+   - Run `/check-replies` - bot should always respond
+
+2. **Subsequent Reply Testing**
+   - Continue the conversation
+   - Run `/check-replies` multiple times
+   - Bot should respond ~30% of the time
+
+3. **Content Filter Testing**
+   ```bash
+   # Add test words to .dev.vars
+   EXCLUDED_WORDS=test,spam,ignore
+
+   # Reply to bot with these words
+   # Bot should skip these replies
+   ```
+
+4. **Age Limit Testing**
+   - Reply to an old post (>24h)
+   - Bot should skip these replies
+
+5. **Self-Reply Testing**
+   - Reply to the bot's post using the bot's account
+   - Bot should skip these replies
+
+### Troubleshooting
+
+1. **Check Logs**
+   - Enable verbose logging:
+     ```
+     DEBUG_MODE=true
+     DEBUG_LEVEL=verbose
+     ```
+   - Look for "Processing notification" and "Reply decision" messages
+
+2. **Common Issues**
+   - API authentication errors: Check credentials in `.dev.vars`
+   - Missing replies: Verify notification fetching is working
+   - Unexpected behavior: Check debug logs for decision reasoning
+
+3. **Testing Environment**
+   - Use `wrangler dev` for local testing
+   - Create test accounts on both platforms
+   - Keep test-payload.json in .gitignore
 
 ## License
 

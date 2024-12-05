@@ -728,4 +728,4 @@ async function main(env) {
 }
 
 // Export for worker
-export { debug, main, MarkovChain, generatePost, loadConfig, cleanText };
+export { debug, main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth };

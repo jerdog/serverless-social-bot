@@ -144,7 +144,7 @@ export async function generateReply(originalPost, replyContent) {
                     },
                     {
                         role: "user",
-                        content: `Original post: "${originalPost}"\nSomeone replied with: "${replyContent}"\nGenerate a witty and funny response:`
+                        content: `Original post: "${originalPost}"\nSomeone replied with: "${replyContent}"\nGenerate a witty and funny response that is slightly unhinged, and keep the response under 280 characters:`
                     }
                 ],
                 max_tokens: 100,
@@ -212,9 +212,71 @@ export async function handleMastodonReply(notification) {
 // Handle replies on Bluesky
 export async function handleBlueskyReply(notification) {
     try {
-        // Implement Bluesky reply handling here
-        // This will be similar to Mastodon but use Bluesky's API
-        debug('Bluesky reply handling not yet implemented', 'warn');
+        debug('Processing Bluesky notification', 'verbose', notification);
+
+        // Get auth session
+        const auth = await getBlueskyAuth();
+        if (!auth) {
+            throw new Error('Failed to authenticate with Bluesky');
+        }
+
+        // Check if this is a reply to our post
+        const replyToUri = notification.reply?.parent?.uri;
+        if (!replyToUri) {
+            debug('Not a reply, skipping', 'verbose');
+            return;
+        }
+
+        const originalPost = getOriginalPost('bluesky', replyToUri);
+        if (!originalPost) {
+            debug('Not a reply to our post, skipping', 'verbose');
+            return;
+        }
+
+        // Get the reply content
+        const replyContent = notification.record?.text;
+        if (!replyContent) {
+            debug('No reply content found', 'verbose');
+            return;
+        }
+
+        // Generate a witty reply
+        const reply = await generateReply(originalPost.content, replyContent);
+        if (!reply) {
+            debug('Failed to generate reply', 'error');
+            return;
+        }
+
+        // Post the reply
+        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${auth.accessJwt}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                repo: auth.did,
+                collection: 'app.bsky.feed.post',
+                record: {
+                    text: reply,
+                    reply: {
+                        root: notification.reply.root,
+                        parent: {
+                            uri: notification.uri,
+                            cid: notification.cid
+                        }
+                    },
+                    createdAt: new Date().toISOString()
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to post Bluesky reply: ${errorText}`);
+        }
+
+        debug('Successfully posted reply to Bluesky', 'info', { reply });
     } catch (error) {
         debug('Error handling Bluesky reply:', 'error', error);
     }
