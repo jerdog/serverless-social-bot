@@ -75,7 +75,7 @@ async function setupEnvironment(env) {
 }
 
 // Check for notifications on both platforms
-async function checkNotifications(env) {
+async function checkNotifications(_env) {
     try {
         debug('Checking for notifications...');
         debug('Fetching Mastodon notifications...', 'info');

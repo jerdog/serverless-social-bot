@@ -32,47 +32,24 @@ class LocalStorage {
 }
 
 // KV namespace for storing posts
-let postsKV = null;
+let _postsKV = null;
 let kvInitialized = false;
-const localStorage = new LocalStorage();
+const _localStorage = new LocalStorage();
 
 // Initialize KV namespace
-async function initializeKV(kv) {
-    if (!kv) {
+async function initializeKV(namespace) {
+    if (!namespace) {
         debug('No KV namespace provided, using local storage', 'warn');
-        postsKV = localStorage;
-        kvInitialized = true;
-        return;
+        _postsKV = _localStorage;
+    } else {
+        _postsKV = namespace;
     }
-    
-    try {
-        // Test if the KV binding is working
-        await kv.list({ prefix: 'test' });
-        postsKV = kv;
-        kvInitialized = true;
-        debug('Successfully initialized KV namespace', 'info');
-    } catch (error) {
-        debug('Error during KV initialization, using local storage', 'warn', error);
-        postsKV = localStorage;
-        kvInitialized = true;
-    }
-}
-
-// Helper to get storage
-function getStorage() {
-    if (!kvInitialized) {
-        throw new Error('KV not initialized - call initializeKV first');
-    }
-    if (!postsKV) {
-        debug('No storage available after initialization, using local storage', 'warn');
-        postsKV = localStorage;
-    }
-    return postsKV;
+    kvInitialized = true;
 }
 
 // Helper to get KV namespace
 function getKVNamespace() {
-    return getStorage();
+    return _postsKV;
 }
 
 // Load recent posts from KV storage
@@ -82,7 +59,7 @@ async function loadRecentPostsFromKV() {
     }
 
     try {
-        const kv = getStorage();
+        const kv = getKVNamespace();
         debug('Loading posts from storage...', 'info');
 
         const { keys } = await kv.list({ prefix: 'post:' });
@@ -231,7 +208,7 @@ async function storeRecentPost(platform, postId, content) {
 
     // Store in storage
     try {
-        const kv = getStorage();
+        const kv = getKVNamespace();
         if (!kv) {
             throw new Error('Storage not initialized');
         }
@@ -293,8 +270,8 @@ async function getOriginalPost(platform, postId) {
     return post.content;
 }
 
-// Track rate limit state
-const rateLimitState = {
+// Track rate limit state for OpenAI
+const _rateLimitState = {
     lastError: null,
     backoffMinutes: 5,
     maxBackoffMinutes: 60,
@@ -303,19 +280,18 @@ const rateLimitState = {
 
 // Fallback responses when rate limited
 const fallbackResponses = [
-    "My AI brain needs a quick nap! 😴 I'll be back with witty responses soon!",
-    "Taking a brief creative break! Check back in a bit for more banter! 🎭",
-    "Currently recharging my joke batteries! 🔋 Will be back with fresh material soon!",
-    "In a brief meditation session to expand my wit! 🧘‍♂️ Back shortly!",
-    "Temporarily out of clever responses - but I'll return with double the humor! ✨",
-    "My pun generator is cooling down! Will be back with more wordplay soon! 🎮",
-    "Taking a quick comedy workshop! Back soon with fresh material! 🎭",
-    "Briefly offline doing stand-up practice! 🎤 Return in a bit for the good stuff!"
+    'Hmm, I need a moment to think about that one...',
+    'My circuits are a bit overloaded right now...',
+    'Give me a minute to process that...',
+    'Taking a quick break to cool my processors...',
+    'Sometimes even bots need a moment to reflect...',
+    'Processing... please stand by...'
 ];
 
-function getFallbackResponse() {
-    const randomIndex = Math.floor(Math.random() * fallbackResponses.length);
-    return fallbackResponses[randomIndex];
+// Get a random fallback response
+function _getFallbackResponse() {
+    const index = Math.floor(Math.random() * fallbackResponses.length);
+    return fallbackResponses[index];
 }
 
 // Generate a reply using OpenAI
@@ -420,7 +396,7 @@ async function handleMastodonReply(notification) {
 
         // Check if we've already replied to this notification
         const replyKey = `replied:mastodon:${notification.id}`;
-        const hasReplied = await getStorage().get(replyKey);
+        const hasReplied = await getKVNamespace().get(replyKey);
         if (hasReplied) {
             debug('Already replied to this notification', 'info', { replyKey });
             return;
@@ -480,7 +456,7 @@ async function handleMastodonReply(notification) {
         if (isOurPost) {
             debug('Skipping reply to our own post', 'info', { postId: notification.status.id });
             // Mark as replied to prevent future processing
-            await getStorage().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
             return;
         }
 
@@ -489,7 +465,7 @@ async function handleMastodonReply(notification) {
         if (!reply) {
             debug('No reply generated', 'warn');
             // Still mark as processed to prevent retries
-            await getStorage().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
             return;
         }
 
@@ -524,7 +500,7 @@ async function handleMastodonReply(notification) {
             await storeRecentPost('mastodon', postedReply.id, replyWithMention);
             
             // Mark as replied to prevent duplicate replies
-            await getStorage().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
             
             debug('Successfully posted reply', 'info', {
                 replyId: postedReply.id,
@@ -539,7 +515,7 @@ async function handleMastodonReply(notification) {
                 userHandle
             });
             // Even in debug mode, mark as replied to prevent duplicate processing
-            await getStorage().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
         }
     } catch (error) {
         debug('Error handling Mastodon reply:', 'error', error);
@@ -564,7 +540,7 @@ async function handleBlueskyReply(notification) {
 
         // Check if we've already replied to this post
         const replyKey = `replied:bluesky:${notification.uri}`;
-        const hasReplied = await getStorage().get(replyKey);
+        const hasReplied = await getKVNamespace().get(replyKey);
         if (hasReplied) {
             debug('Already replied to this post', 'info', { replyKey });
             return;
@@ -586,7 +562,7 @@ async function handleBlueskyReply(notification) {
                 notification
             });
             // Still store that we "replied" to prevent duplicate debug logs
-            await getStorage().put(replyKey, 'true');
+            await getKVNamespace().put(replyKey, 'true');
             debug('Marked post as replied to (debug mode)', 'info', { replyKey });
             return;
         }
@@ -624,7 +600,7 @@ async function handleBlueskyReply(notification) {
         }
 
         // Mark this post as replied to
-        await getStorage().put(replyKey, 'true');
+        await getKVNamespace().put(replyKey, 'true');
         debug('Successfully replied to Bluesky post', 'info', { replyKey });
 
     } catch (error) {
@@ -638,8 +614,8 @@ export {
     handleBlueskyReply,
     generateReply,
     fetchPostContent,
-    initializeKV,
     loadRecentPostsFromKV,
     storeRecentPost,
-    getOriginalPost
+    getOriginalPost,
+    initializeKV
 };

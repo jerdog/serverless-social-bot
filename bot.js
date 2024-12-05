@@ -149,32 +149,6 @@ async function loadConfig() {
 // Global config object
 let CONFIG = null;
 
-// Utility Functions
-function validateBlueskyUsername(username) {
-    if (!username) {
-        debug('Username is empty', 'error');
-        return false;
-    }
-    
-    // debug(`Validating Bluesky username: ${username}`, 'verbose');
-    
-    // Remove any leading @ if present
-    username = username.replace(/^@/, '');
-    
-    // Allow any username that contains at least one dot
-    // This covers handle.bsky.social, handle.domain.tld, etc.
-    if (username.includes('.')) {
-        const handle = username.split('.')[0];
-        // Basic handle validation - allow letters, numbers, underscores, and hyphens
-        if (handle.match(/^[a-zA-Z0-9_-]+$/)) {
-            return true;
-        }
-    }
-    
-    debug(`Invalid username format: ${username}`, 'error');
-    return false;
-}
-
 function cleanText(text) {
     if (!text || typeof text !== 'string') {
         return '';
@@ -539,29 +513,6 @@ async function getBlueskyAuth() {
         };
     } catch (error) {
         debug('Error authenticating with Bluesky:', 'error', error);
-        return null;
-    }
-}
-
-async function getBlueskyDid() {
-    try {
-        const response = await fetch(`${CONFIG.bluesky.service}/xrpc/com.atproto.identity.resolveHandle?handle=${CONFIG.bluesky.identifier}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const data = await response.json();
-        if (data.error) {
-            debug(`Failed to resolve Bluesky DID: ${data.error}`, 'error', data);
-            return null;
-        }
-
-        debug(`Resolved DID for ${CONFIG.bluesky.identifier}: ${data.did}`, 'info');
-        return data.did;
-    } catch (error) {
-        debug(`Error resolving Bluesky DID: ${error.message}`, 'error');
         return null;
     }
 }
