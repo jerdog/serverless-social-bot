@@ -1,6 +1,6 @@
 {
   "name": "@jerdog/serverless-social-bot",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "A serverless social media bot using Markov chains",
   "type": "module",
   "engines": {
