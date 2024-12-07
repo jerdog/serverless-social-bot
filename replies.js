@@ -114,12 +114,14 @@ function extractBlueskyHandle(url) {
     return match ? match[1] : null;
 }
 
-// Fetch post content from Mastodon URL
-async function fetchMastodonPost(url) {
+// Fetch a post from Mastodon
+async function fetchMastodonPost(postId) {
     try {
-        const postId = extractMastodonPostId(url);
-        if (!postId) {
-            throw new Error('Invalid Mastodon post URL');
+        debug('Fetching Mastodon post', 'info', { postId });
+
+        // Make sure we have a valid post ID
+        if (!postId || typeof postId !== 'string') {
+            throw new Error('Invalid post ID');
         }
 
         const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses/${postId}`, {
@@ -129,11 +131,32 @@ async function fetchMastodonPost(url) {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to fetch Mastodon post');
+            debug('Failed to fetch Mastodon post', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                postId
+            });
+            return null;
         }
 
         const post = await response.json();
-        return post.content.replace(/<[^>]+>/g, ''); // Strip HTML tags
+        if (!post || !post.content) {
+            debug('Invalid Mastodon post data', 'error', { post });
+            return null;
+        }
+
+        // Clean the post content
+        const cleanContent = post.content
+            .replace(/<[^>]*>/g, '') // Remove HTML tags
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .trim();
+
+        debug('Successfully fetched Mastodon post', 'info', {
+            postId,
+            content: cleanContent.substring(0, 50) + (cleanContent.length > 50 ? '...' : '')
+        });
+
+        return cleanContent;
     } catch (error) {
         debug('Error fetching Mastodon post:', 'error', error);
         return null;
@@ -183,7 +206,8 @@ async function fetchBlueskyPost(url) {
 // Fetch post content from URL
 async function fetchPostContent(postUrl) {
     if (postUrl.includes('mastodon') || postUrl.includes('hachyderm.io')) {
-        return await fetchMastodonPost(postUrl);
+        const postId = extractMastodonPostId(postUrl);
+        return await fetchMastodonPost(postId);
     } else if (postUrl.includes('bsky.app')) {
         return await fetchBlueskyPost(postUrl);
     } else {
@@ -192,60 +216,48 @@ async function fetchPostContent(postUrl) {
 }
 
 // Store a new post from our bot
-async function storeRecentPost(platform, postId, content) {
-    debug('Storing recent post', 'info', {
-        platform,
-        postId,
-        content: content.substring(0, 50) + '...',
-        cacheSize: recentPosts.size
-    });
-
-    const key = `${platform}:${postId}`;
-    const post = { content, timestamp: Date.now() };
-    
-    // Store in memory
-    recentPosts.set(key, post);
-
-    // Store in storage
+async function storeRecentPost(platform, postId, content, isReply = false) {
     try {
+        const key = `${platform}:${postId}`;
+        const post = {
+            platform,
+            postId,
+            content,
+            type: isReply ? 'reply' : 'post',
+            timestamp: new Date().toISOString()
+        };
+
+        // Store in memory cache
+        recentPosts.set(key, post);
+
+        // Trim cache if it gets too big (keep last 100 posts)
+        if (recentPosts.size > 100) {
+            const oldestKey = Array.from(recentPosts.keys())[0];
+            recentPosts.delete(oldestKey);
+            debug('Trimmed memory cache', 'info', {
+                removedKey: oldestKey,
+                newSize: recentPosts.size
+            });
+        }
+
+        // Store in KV with appropriate prefix
         const kv = getKVNamespace();
-        if (!kv) {
-            throw new Error('Storage not initialized');
-        }
-
-        await kv.put(`post:${key}`, JSON.stringify(post));
-        debug('Stored post in storage', 'info', { 
-            key,
-            postCount: recentPosts.size,
-            storage: 'KV'
+        const kvKey = isReply ? `reply:${key}` : `post:${key}`;
+        await kv.put(kvKey, JSON.stringify(post), {
+            // Store for 24 hours
+            expirationTtl: 86400
         });
 
-        // Clean up old posts (older than 24 hours)
-        const now = Date.now();
-        const oldPosts = [];
-        for (const [existingKey, existingPost] of recentPosts.entries()) {
-            if (now - existingPost.timestamp > 24 * 60 * 60 * 1000) {
-                oldPosts.push(existingKey);
-            }
-        }
-
-        // Remove old posts
-        for (const oldKey of oldPosts) {
-            debug('Removing old post', 'info', { key: oldKey });
-            recentPosts.delete(oldKey);
-            await kv.delete(`post:${oldKey}`);
-        }
-
-        debug('Storage cleanup complete', 'info', {
-            removed: oldPosts.length,
-            remaining: recentPosts.size
+        debug('Stored post', 'info', {
+            key: kvKey,
+            type: post.type,
+            content: content.substring(0, 50) + (content.length > 50 ? '...' : '')
         });
+
+        return true;
     } catch (error) {
-        debug('Error in post storage:', 'error', {
-            error: error.message,
-            stack: error.stack
-        });
-        throw error;
+        debug('Error storing post:', 'error', error);
+        return false;
     }
 }
 
@@ -268,7 +280,13 @@ async function getOriginalPost(platform, postId) {
     if (!post) {
         try {
             const kv = getKVNamespace();
-            const storedPost = await kv.get(`post:${key}`);
+            
+            // Try both post and reply keys
+            let storedPost = await kv.get(`post:${key}`);
+            if (!storedPost) {
+                storedPost = await kv.get(`reply:${key}`);
+            }
+            
             if (storedPost) {
                 try {
                     post = JSON.parse(storedPost);
@@ -276,6 +294,7 @@ async function getOriginalPost(platform, postId) {
                     recentPosts.set(key, post);
                     debug('Loaded post from storage', 'info', { 
                         key,
+                        type: post.type,
                         content: post.content?.substring(0, 50)
                     });
                 } catch (parseError) {
@@ -301,15 +320,84 @@ async function getOriginalPost(platform, postId) {
         return null;
     }
 
+    // Only return content if it's a post, not a reply
+    if (post.type === 'reply') {
+        debug('Found post but it is a reply, ignoring', 'info', { 
+            key, 
+            type: post.type
+        });
+        return null;
+    }
+
     debug('Found post', 'info', { 
         key, 
+        type: post.type,
         content: post.content.substring(0, 50) + '...'
     });
     return post.content;
 }
 
+// Fetch thread context from Bluesky
+async function getThreadContext(notification, auth) {
+    try {
+        const threadContext = [];
+        
+        // Get the root post if it exists
+        if (notification.record.reply?.root?.uri) {
+            const rootResponse = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(notification.record.reply.root.uri)}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${auth.accessJwt}`
+                }
+            });
+
+            if (rootResponse.ok) {
+                const rootData = await rootResponse.json();
+                if (rootData.thread?.post?.record?.text) {
+                    threadContext.push({
+                        type: 'root',
+                        text: rootData.thread.post.record.text
+                    });
+                }
+            }
+        }
+
+        // Get the parent post if different from root
+        if (notification.record.reply?.parent?.uri && 
+            notification.record.reply.parent.uri !== notification.record.reply?.root?.uri) {
+            const parentResponse = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(notification.record.reply.parent.uri)}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${auth.accessJwt}`
+                }
+            });
+
+            if (parentResponse.ok) {
+                const parentData = await parentResponse.json();
+                if (parentData.thread?.post?.record?.text) {
+                    threadContext.push({
+                        type: 'parent',
+                        text: parentData.thread.post.record.text
+                    });
+                }
+            }
+        }
+
+        // Add the current post
+        threadContext.push({
+            type: 'current',
+            text: notification.record.text
+        });
+
+        return threadContext;
+    } catch (error) {
+        debug('Error getting thread context:', 'error', error);
+        return [];
+    }
+}
+
 // Generate a reply using OpenAI
-async function generateReply(originalPost, replyContent) {
+async function generateReply(originalPost, replyContent, threadContext = []) {
     try {
         if (!originalPost || !replyContent) {
             debug('Missing required content for reply generation', 'error', {
@@ -321,7 +409,8 @@ async function generateReply(originalPost, replyContent) {
 
         debug('Generating reply with OpenAI', 'info', {
             originalPost: originalPost?.substring(0, 100),
-            replyContent: replyContent?.substring(0, 100)
+            replyContent: replyContent?.substring(0, 100),
+            hasThreadContext: threadContext.length > 0
         });
 
         // Clean up the posts
@@ -331,30 +420,32 @@ async function generateReply(originalPost, replyContent) {
             .replace(/@[\w]+/g, '') // Remove user mentions
             .trim();
 
-        const cleanReplyContent = replyContent
+        const cleanReply = replyContent
             .replace(/<[^>]*>/g, '')
             .replace(/\s+/g, ' ')
-            .replace(/@[\w]+/g, '') // Remove user mentions
+            .replace(/@[\w]+/g, '')
             .trim();
 
-        // Create the prompt
-        const prompt = `As a witty and engaging social media bot, generate a brief, clever reply to this conversation. 
-DO NOT include any @mentions or usernames in your response - those will be handled separately.
-DO NOT use hashtags unless they're contextually relevant.
-Keep the response under 400 characters.
+        // Construct thread context string if available
+        let contextString = '';
+        if (threadContext.length > 0) {
+            contextString = 'Thread context:\n' + threadContext
+                .map(post => `${post.type === 'root' ? 'Original post' : post.type === 'parent' ? 'Previous reply' : 'Current reply'}: ${post.text}`)
+                .join('\n');
+        }
 
-Original post: "${cleanOriginal}"
-Reply to original: "${cleanReplyContent}"
+        const systemPrompt = `You are a witty and engaging social media bot. Your responses should be:
+1. Relevant to the conversation
+2. Engaging but not confrontational
+3. Brief (max 300 characters)
+4. Natural and conversational
+5. Free of @mentions
+6. Avoiding controversial topics
+7. Free of quotation marks - do not wrap your response in quotes
 
-Generate a witty response that:
-1. Is relevant to the conversation
-2. Shows personality but stays respectful
-3. Encourages further engagement
-4. Is concise and to the point
+${contextString ? 'Use the thread context to maintain conversation relevance.\n' : ''}
+Respond to the user's reply while maintaining context of the original post.`;
 
-Your response:`;
-
-        // Get completion from OpenAI
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -363,39 +454,28 @@ Your response:`;
             },
             body: JSON.stringify({
                 model: 'gpt-4',
-                messages: [{
-                    role: 'user',
-                    content: prompt
-                }],
-                temperature: 0.7,
-                max_tokens: 150
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Original post: "${cleanOriginal}"${contextString ? '\n\n' + contextString : ''}\n\nUser's reply: "${cleanReply}"\n\nGenerate a witty response:` }
+                ],
+                max_tokens: 150,
+                temperature: 0.7
             })
         });
 
         if (!response.ok) {
-            debug('OpenAI API error:', 'error', {
-                status: response.status,
-                statusText: response.statusText
-            });
-            return null;
+            const errorData = await response.json();
+            debug('OpenAI API error:', 'error', errorData);
+            throw new Error(`OpenAI API error: ${errorData.error?.message || 'Unknown error'}`);
         }
 
         const data = await response.json();
-        const reply = data.choices[0]?.message?.content?.trim();
+        const reply = data.choices[0].message.content
+            .trim()
+            .replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
+        debug('Generated reply', 'info', { reply });
 
-        if (!reply) {
-            debug('No reply generated from OpenAI', 'warn');
-            return null;
-        }
-
-        // Clean up any remaining mentions or formatting
-        const cleanReply = reply
-            .replace(/@[\w]+/g, '') // Remove any mentions that might have slipped through
-            .replace(/^["']|["']$/g, '') // Remove quotes if present
-            .trim();
-
-        debug('Generated reply', 'info', { reply: cleanReply });
-        return cleanReply;
+        return reply;
     } catch (error) {
         debug('Error generating reply:', 'error', error);
         return null;
@@ -428,141 +508,68 @@ function _getFallbackResponse() {
 
 // Handle a reply on Mastodon
 async function handleMastodonReply(notification) {
+    const replyKey = `mastodon:replied:${notification.status.id}`;
+        
     try {
-        debug('Processing Mastodon reply...', 'info', {
-            id: notification.id,
-            type: notification.type,
-            account: notification.account?.username,
-            status: {
-                id: notification.status.id,
-                content: notification.status.content,
-                in_reply_to_id: notification.status.in_reply_to_id
-            }
-        });
-
-        // Check if we've already replied to this notification
-        const replyKey = `replied:mastodon:${notification.id}`;
+        // Check if we've already replied to this post
         const hasReplied = await getKVNamespace().get(replyKey);
         if (hasReplied) {
-            debug('Already replied to this notification', 'info', { replyKey });
+            debug('Already replied to this Mastodon post', 'info', { replyKey });
             return;
         }
-
-        // Clean the content
-        const content = notification.status.content;
-        const cleanedContent = content
-            .replace(/<[^>]*>/g, '') // Remove HTML tags
-            .replace(/\s+/g, ' ') // Normalize whitespace
-            .trim();
-
-        debug('Cleaned content', 'info', {
-            original: content,
-            cleaned: cleanedContent
-        });
-
-        // Get the original post we're replying to
-        const originalPostId = notification.status.in_reply_to_id;
-        
-        // Try to get the original post from our cache first
-        let originalPost = await getOriginalPost('mastodon', originalPostId);
-        
-        // If not in cache, fetch it from Mastodon
-        if (!originalPost) {
-            debug('Original post not in cache, fetching from Mastodon...', 'info', { originalPostId });
             
-            const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses/${originalPostId}`, {
-                headers: {
-                    'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
-                }
-            });
-
-            if (!response.ok) {
-                debug('Failed to fetch original post', 'error', {
-                    status: response.status,
-                    statusText: response.statusText
-                });
-                return;
-            }
-
-            const post = await response.json();
-            originalPost = post.content;
-            
-            // Store the post for future reference
-            await storeRecentPost('mastodon', originalPostId, originalPost);
-        }
-
-        // If we still don't have the original post, skip
+        // Get the original post content
+        const originalPost = await fetchPostContent(notification.status.url);
         if (!originalPost) {
-            debug('Could not find original post, skipping', 'warn', { originalPostId });
+            debug('Could not fetch original Mastodon post', 'error', { id: notification.status.id });
             return;
         }
-
-        // Check if this is a reply to our own post
-        const isOurPost = await getOriginalPost('mastodon', notification.status.id);
-        if (isOurPost) {
-            debug('Skipping reply to our own post', 'info', { postId: notification.status.id });
-            // Mark as replied to prevent future processing
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
-            return;
-        }
-
-        // Generate and post the reply
-        const reply = await generateReply(originalPost, cleanedContent);
+            
+        // Generate the reply
+        const reply = await generateReply(originalPost, notification.status.content);
         if (!reply) {
-            debug('No reply generated', 'warn');
-            // Still mark as processed to prevent retries
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            debug('Failed to generate reply for Mastodon post', 'error', { id: notification.status.id });
             return;
         }
-
-        // Add the user mention to the reply
-        const userHandle = notification.account?.acct || notification.account?.username;
-        const replyWithMention = `@${userHandle} ${reply}`;
-
+            
+        // Add the mention
+        const replyWithMention = `@${notification.account.acct} ${reply}`;
+            
         // Post the reply
-        if (process.env.DEBUG_MODE !== 'true') {
-            const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    status: replyWithMention,
-                    in_reply_to_id: notification.status.id,  // Reply to the notification that mentioned us
-                    visibility: 'public'
-                })
-            });
-
-            if (!response.ok) {
-                debug('Failed to post reply', 'error', {
-                    status: response.status,
-                    statusText: response.statusText
-                });
-                return;
-            }
-
-            const postedReply = await response.json();
-            await storeRecentPost('mastodon', postedReply.id, replyWithMention);
+        const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                status: replyWithMention,
+                in_reply_to_id: notification.status.id,
+                visibility: 'public'
+            })
+        });
             
-            // Mark as replied to prevent duplicate replies
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
-            
-            debug('Successfully posted reply', 'info', {
-                replyId: postedReply.id,
-                inReplyTo: notification.status.id,
-                userHandle,
-                content: replyWithMention
+        if (!response.ok) {
+            const errorData = await response.text();
+            debug('Error posting Mastodon reply:', 'error', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorData
             });
-        } else {
-            debug('Debug mode: Would have posted reply', 'info', {
-                content: replyWithMention,
-                inReplyTo: notification.status.id,
-                userHandle
-            });
-            // Even in debug mode, mark as replied to prevent duplicate processing
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            throw new Error(`Failed to post Mastodon reply: ${errorData}`);
         }
+
+        const postedReply = await response.json();
+        await storeRecentPost('mastodon', postedReply.id, replyWithMention, true);  // Set isReply to true
+            
+        // Mark as replied to prevent duplicate replies
+        await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+        debug('Successfully replied to Mastodon post', 'info', { 
+            replyKey,
+            originalId: notification.status.id,
+            replyId: postedReply.id
+        });
+            
     } catch (error) {
         debug('Error handling Mastodon reply:', 'error', error);
     }
@@ -570,58 +577,37 @@ async function handleMastodonReply(notification) {
 
 // Handle replies on Bluesky
 async function handleBlueskyReply(notification) {
+    const replyKey = `bluesky:replied:${notification.uri}`;
+
     try {
-        debug('Processing Bluesky reply...', notification);
-
-        // Load recent posts from storage if needed
-        if (recentPosts.size === 0) {
-            await loadRecentPostsFromKV();
-        }
-
-        // Check if this is a reply to one of our posts
-        const originalPost = await getOriginalPost('bluesky', notification.reasonSubject);
-        if (!originalPost) {
-            debug('Not a reply to our post', 'info', {
-                replyToId: notification.reasonSubject,
-                recentPostsCount: recentPosts.size,
-                recentPostKeys: Array.from(recentPosts.keys())
-            });
+        // Check if we've already replied to this post
+        const hasReplied = await getKVNamespace().get(replyKey);
+        if (hasReplied) {
+            debug('Already replied to this Bluesky post', 'info', { replyKey });
             return;
         }
 
-        // Check if we've already replied to this post
-        const replyKey = `replied:bluesky:${notification.uri}`;
-        const hasReplied = await getKVNamespace().get(replyKey);
-        if (hasReplied) {
-            debug('Already replied to this post', 'info', { replyKey });
+        // Get auth token first
+        const auth = await getBlueskyAuth();
+        if (!auth || !auth.accessJwt) {
+            throw new Error('Failed to authenticate with Bluesky');
+        }
+
+        // Get thread context for better replies
+        const threadContext = await getThreadContext(notification, auth);
+
+        // Get the original post content
+        const originalPost = notification.record.text || '';
+        if (!originalPost) {
+            debug('No content in Bluesky post', 'error', { notification });
             return;
         }
 
         // Generate the reply
-        const generatedReply = await generateReply(originalPost, notification.record.text);
+        const generatedReply = await generateReply(originalPost, notification.record.text, threadContext);
         if (!generatedReply) {
-            debug('Failed to generate reply');
+            debug('Failed to generate reply for Bluesky post', 'error', { notification });
             return;
-        }
-
-        // In debug mode, just log what would have been posted
-        if (process.env.DEBUG_MODE === 'true') {
-            debug('Debug mode: Would reply to Bluesky post', 'info', {
-                originalPost,
-                replyTo: notification.record.text,
-                generatedReply,
-                notification
-            });
-            // Still store that we "replied" to prevent duplicate debug logs
-            await getKVNamespace().put(replyKey, 'true');
-            debug('Marked post as replied to (debug mode)', 'info', { replyKey });
-            return;
-        }
-
-        // Get auth token
-        const auth = await getBlueskyAuth();
-        if (!auth || !auth.accessJwt) {
-            throw new Error('Failed to authenticate with Bluesky');
         }
 
         // Create the post
@@ -638,7 +624,7 @@ async function handleBlueskyReply(notification) {
                     text: generatedReply,
                     reply: {
                         root: {
-                            uri: notification.reasonSubject,
+                            uri: notification.record.reply?.root?.uri || notification.reasonSubject,
                             cid: notification.record.reply?.root?.cid
                         },
                         parent: {
@@ -656,14 +642,26 @@ async function handleBlueskyReply(notification) {
             debug('Error response from Bluesky:', 'error', {
                 status: response.status,
                 statusText: response.statusText,
-                error: errorData
+                error: errorData,
+                notification
             });
             throw new Error(`Failed to post reply: ${errorData}`);
         }
 
-        // Mark this post as replied to
-        await getKVNamespace().put(replyKey, 'true');
-        debug('Successfully replied to Bluesky post', 'info', { replyKey });
+        // Get the response data which contains our post URI
+        const responseData = await response.json();
+        const postUri = responseData.uri;
+            
+        // Store our reply in KV for future reference
+        await storeRecentPost('bluesky', postUri, generatedReply, true);  // Set isReply to true
+            
+        // Mark this post as replied to with 24-hour expiration
+        await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 });
+        debug('Successfully replied to Bluesky post', 'info', { 
+            replyKey,
+            postUri,
+            reply: generatedReply
+        });
 
     } catch (error) {
         debug('Error handling Bluesky reply:', 'error', error);
@@ -674,10 +672,11 @@ async function handleBlueskyReply(notification) {
 export {
     handleMastodonReply,
     handleBlueskyReply,
-    generateReply,
-    fetchPostContent,
-    loadRecentPostsFromKV,
-    storeRecentPost,
     getOriginalPost,
-    initializeKV
+    generateReply,
+    getThreadContext,
+    storeRecentPost,
+    initializeKV,
+    fetchPostContent,
+    loadRecentPostsFromKV
 };

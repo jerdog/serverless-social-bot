@@ -1,7 +1,7 @@
 // Import only the necessary functions
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, loadRecentPostsFromKV } from './replies.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, initializeKV, loadRecentPostsFromKV } from './replies.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -75,12 +75,96 @@ async function setupEnvironment(env) {
 }
 
 // Check for notifications on both platforms
-async function checkNotifications(_env) {
+async function checkNotifications(env) {
     try {
         debug('Checking for notifications...');
         debug('Fetching Mastodon notifications...', 'info');
 
+        // Get last processed timestamps from KV
+        const kv = env.POSTS_KV;
+        const lastMastodonCheck = await kv.get('last:mastodon:check');
+        const lastBlueskyCheck = await kv.get('last:bluesky:check');
+        const isFirstRun = await kv.get('first:run');
+
+        // If this is the first run in production, mark all current notifications as processed
+        if (!isFirstRun) {
+            debug('First run detected, marking current notifications as processed', 'info');
+            
+            // Mark Mastodon
+            const mastodonNotifs = await getMastodonNotifications(env);
+            if (mastodonNotifs && mastodonNotifs.length > 0) {
+                const lastId = mastodonNotifs[0].id;
+                await kv.put('last:mastodon:check', lastId);
+                debug('Marked Mastodon notifications as processed', 'info', { lastId });
+            }
+
+            // Mark Bluesky
+            const blueskyNotifs = await getBlueskyNotifications(env);
+            if (blueskyNotifs && blueskyNotifs.length > 0) {
+                const lastTime = new Date().toISOString();
+                await kv.put('last:bluesky:check', lastTime);
+                debug('Marked Bluesky notifications as processed', 'info', { lastTime });
+            }
+
+            // Mark first run complete
+            await kv.put('first:run', 'true', { expirationTtl: 365 * 24 * 60 * 60 }); // 1 year
+            debug('First run setup complete', 'info');
+            return;
+        }
+
         // Check Mastodon notifications
+        const mastodonNotifications = await getMastodonNotifications(env);
+        if (mastodonNotifications && mastodonNotifications.length > 0) {
+            debug('Processing Mastodon notifications', 'info', { count: mastodonNotifications.length });
+            
+            // Process only notifications newer than last check
+            const newNotifications = lastMastodonCheck 
+                ? mastodonNotifications.filter(n => n.id > lastMastodonCheck)
+                : mastodonNotifications;
+
+            for (const notification of newNotifications) {
+                if (notification.type === 'mention') {
+                    await handleMastodonReply(notification);
+                }
+            }
+
+            // Update last check time
+            if (newNotifications.length > 0) {
+                await kv.put('last:mastodon:check', mastodonNotifications[0].id);
+            }
+        }
+
+        // Check Bluesky notifications
+        const blueskyNotifications = await getBlueskyNotifications(env);
+        if (blueskyNotifications && blueskyNotifications.length > 0) {
+            debug('Processing Bluesky notifications', 'info', { count: blueskyNotifications.length });
+            
+            // Process only notifications newer than last check
+            const lastCheckTime = lastBlueskyCheck ? new Date(lastBlueskyCheck) : null;
+            const newNotifications = lastCheckTime
+                ? blueskyNotifications.filter(n => new Date(n.indexedAt) > lastCheckTime)
+                : blueskyNotifications;
+
+            for (const notification of newNotifications) {
+                if (notification.reason === 'mention') {
+                    await handleBlueskyReply(notification);
+                }
+            }
+
+            // Update last check time
+            if (newNotifications.length > 0) {
+                await kv.put('last:bluesky:check', new Date().toISOString());
+            }
+        }
+
+    } catch (error) {
+        debug('Error checking notifications:', 'error', error);
+    }
+}
+
+// Helper function to get Mastodon notifications
+async function getMastodonNotifications(env) {
+    try {
         const mastodonResponse = await fetch(`${process.env.MASTODON_API_URL}/api/v1/notifications?types[]=mention`, {
             headers: {
                 'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
@@ -106,82 +190,49 @@ async function checkNotifications(_env) {
             firstNotification: mastodonNotifications[0]
         });
 
-        // Process each Mastodon notification
-        for (const notification of mastodonNotifications) {
-            debug('Processing Mastodon notification', 'info', {
-                type: notification.type,
-                id: notification.id,
-                status: notification.status?.content
-            });
-
-            if (notification.type === 'mention') {
-                await handleMastodonReply(notification);
-            }
-        }
-
-        // Check Bluesky notifications if configured
-        if (process.env.BLUESKY_USERNAME && process.env.BLUESKY_PASSWORD) {
-            debug('Fetching Bluesky notifications...', 'info');
-            
-            // Get Bluesky auth
-            const auth = await getBlueskyAuth();
-            if (!auth || !auth.accessJwt) {
-                debug('Failed to authenticate with Bluesky - missing access token', 'error');
-                return;
-            }
-
-            // Fetch notifications using the ATP API
-            const notificationsResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications`, {
-                headers: {
-                    'Authorization': `Bearer ${auth.accessJwt}`,
-                    'Accept': 'application/json'
-                }
-            });
-
-            if (!notificationsResponse.ok) {
-                debug('Failed to fetch Bluesky notifications', 'error', {
-                    status: notificationsResponse.status,
-                    statusText: notificationsResponse.statusText
-                });
-                return;
-            }
-
-            const blueskyData = await notificationsResponse.json();
-            const notifications = blueskyData.notifications || [];
-
-            debug('Retrieved Bluesky notifications', 'info', {
-                totalCount: notifications.length,
-                firstNotification: notifications[0]
-            });
-
-            // Process each Bluesky notification
-            for (const notification of notifications) {
-                debug('Processing Bluesky notification', 'info', {
-                    reason: notification.reason,
-                    author: notification.author?.handle,
-                    cid: notification.cid
-                });
-
-                if (notification.reason === 'reply') {
-                    await handleBlueskyReply(notification);
-                }
-            }
-
-            // Mark notifications as read
-            if (notifications.length > 0) {
-                const seenAt = new Date().toISOString();
-                await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.updateSeen`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${auth.accessJwt}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ seenAt })
-                });
-            }
-        }
+        return mastodonNotifications;
     } catch (error) {
-        debug('Error checking notifications:', 'error', error);
+        debug('Error fetching Mastodon notifications:', 'error', error);
+    }
+}
+
+// Helper function to get Bluesky notifications
+async function getBlueskyNotifications(env) {
+    try {
+        // Get Bluesky auth
+        const auth = await getBlueskyAuth();
+        if (!auth || !auth.accessJwt) {
+            debug('Failed to authenticate with Bluesky - missing access token', 'error');
+            return;
+        }
+
+        // Fetch notifications using the ATP API
+        const notificationsResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications`, {
+            headers: {
+                'Authorization': `Bearer ${auth.accessJwt}`,
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!notificationsResponse.ok) {
+            debug('Failed to fetch Bluesky notifications', 'error', {
+                status: notificationsResponse.status,
+                statusText: notificationsResponse.statusText
+            });
+            return;
+        }
+
+        const blueskyData = await notificationsResponse.json();
+        const notifications = blueskyData.notifications || [];
+
+        debug('Retrieved Bluesky notifications', 'info', {
+            totalCount: notifications.length,
+            firstNotification: notifications[0]
+        });
+
+        return notifications;
+    } catch (error) {
+        debug('Error fetching Bluesky notifications:', 'error', error);
     }
 }
 
