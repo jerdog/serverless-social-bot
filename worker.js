@@ -1,7 +1,14 @@
 // Import only the necessary functions
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, initializeKV, loadRecentPostsFromKV } from './replies.js';
+import { 
+    handleMastodonReply, 
+    handleBlueskyReply, 
+    generateReply, 
+    initializeKV, 
+    loadRecentPostsFromKV,
+    fetchPostContent 
+} from './replies.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -163,7 +170,7 @@ async function checkNotifications(env) {
 }
 
 // Helper function to get Mastodon notifications
-async function getMastodonNotifications(env) {
+async function getMastodonNotifications(_env) {
     try {
         const mastodonResponse = await fetch(`${process.env.MASTODON_API_URL}/api/v1/notifications?types[]=mention`, {
             headers: {
@@ -197,7 +204,7 @@ async function getMastodonNotifications(env) {
 }
 
 // Helper function to get Bluesky notifications
-async function getBlueskyNotifications(env) {
+async function getBlueskyNotifications(_env) {
     try {
         // Get Bluesky auth
         const auth = await getBlueskyAuth();
