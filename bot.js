@@ -424,6 +424,15 @@ async function fetchRecentPosts() {
     }
 }
 
+// Cache a successful Bluesky session so we don't re-authenticate on every call
+// within (and across) a short-lived invocation. TTL is kept well under the
+// access token's ~2h lifetime; the cache is keyed by identifier so a credential
+// change forces a fresh login.
+let blueskyAuthCache = null;
+let blueskyAuthExpiry = 0;
+let blueskyAuthIdentifier = null;
+const BLUESKY_AUTH_TTL_MS = 50 * 60 * 1000;
+
 async function getBlueskyAuth() {
     try {
         const username = process.env.BLUESKY_USERNAME;
@@ -433,6 +442,12 @@ async function getBlueskyAuth() {
         if (!username || !password) {
             debug('Missing Bluesky credentials', 'error');
             return null;
+        }
+
+        // Reuse a cached session while it is still fresh.
+        if (blueskyAuthCache && blueskyAuthIdentifier === username && Date.now() < blueskyAuthExpiry) {
+            debug('Reusing cached Bluesky session', 'info');
+            return blueskyAuthCache;
         }
 
         debug('Authenticating with Bluesky using:', 'info', username);
@@ -471,11 +486,15 @@ async function getBlueskyAuth() {
             hasRefreshJwt: !!data.refreshJwt
         });
 
-        return {
+        // Cache the successful session (only successes are cached).
+        blueskyAuthCache = {
             did: data.did,
             accessJwt: data.accessJwt,
             refreshJwt: data.refreshJwt
         };
+        blueskyAuthExpiry = Date.now() + BLUESKY_AUTH_TTL_MS;
+        blueskyAuthIdentifier = username;
+        return blueskyAuthCache;
     } catch (error) {
         debug('Error authenticating with Bluesky:', 'error', error);
         return null;

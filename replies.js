@@ -627,8 +627,9 @@ async function handleBlueskyReply(notification) {
             throw new Error('Failed to authenticate with Bluesky');
         }
 
-        // Create the post
-        const response = await fetch('https://bsky.social/xrpc/com.atproto.repo.createRecord', {
+        // Create the post (use the configured PDS host, not a hardcoded one)
+        const blueskyApiUrl = process.env.BLUESKY_API_URL || 'https://bsky.social';
+        const response = await fetch(`${blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${auth.accessJwt}`,
