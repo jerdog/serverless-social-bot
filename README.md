@@ -16,7 +16,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - Extensible for additional platforms
 
 ### AI-Powered Reply Generation
-- Generates witty, contextual replies using ChatGPT
+- Generates witty, contextual replies using Cloudflare Workers AI (Gemma 4)
 - Supports both Mastodon and Bluesky post URLs
 - Smart reply behavior:
   - Always replies to first interaction in a thread
@@ -36,7 +36,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `BLUESKY_API_URL` - Bluesky API URL (default: https://bsky.social)
 - `BLUESKY_USERNAME` - Your Bluesky username
 - `BLUESKY_PASSWORD` - Your Bluesky app password
-- `OPENAI_API_KEY` - Your OpenAI API key (required for reply generation)
+- _Reply generation uses the Cloudflare **Workers AI** binding (`AI`) — no API key required. See wrangler.toml._
 
 ### Optional Environment Variables
 
@@ -49,6 +49,25 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MARKOV_MIN_CHARS` - Minimum characters in generated post (default: 100)
 - `MARKOV_MAX_CHARS` - Maximum characters in generated post (default: 280)
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
+- `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/google/gemma-4-26b-a4b-it`)
+- `AI_MAX_TOKENS` - Max tokens per generated reply (default: 120)
+- `AI_TEMPERATURE` - Sampling temperature for replies (default: 0.7)
+
+## Reply Generation (Workers AI)
+
+Replies are generated with [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/)
+through the `AI` binding declared in `wrangler.toml` — there is **no external API
+key**. The default model is **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`), a
+Mixture-of-Experts model (26B total parameters, ~4B active per forward pass) that
+runs close to 4B-model speed while keeping larger-model quality.
+
+Tuned for efficiency: a compact system prompt, `AI_MAX_TOKENS` capped at 120
+(replies stay under 400 characters), and `AI_TEMPERATURE` at 0.7 for wit without
+drift. Swap the model or params via the env vars above. If a call fails (e.g.
+capacity limits), the bot backs off exponentially and returns a short fallback line.
+
+> Workers AI runs against your Cloudflare account and incurs usage charges even
+> during `wrangler dev`.
 
 ## Debug Mode
 
@@ -113,8 +132,9 @@ Debug mode: Would reply to Mastodon post: [reply content]
    BLUESKY_SOURCE_ACCOUNTS=@user.bsky.social
    DEBUG_MODE=true    # Start with debug mode enabled for safety
    DEBUG_LEVEL=verbose
-   OPENAI_API_KEY=your_openai_api_key
    ```
+   Reply generation uses the Workers AI `AI` binding (configured in
+   `wrangler.toml`), so no API key belongs in `.dev.vars`.
 
 3. Start the development server:
    ```bash
@@ -141,8 +161,9 @@ a labeled dataset you can use to tune the model over time:
 
 - **Posts** (Markov output) — downvoted examples flag corpus/source accounts to
   prune; upvoted examples are candidates to promote into the source corpus.
-- **Replies** (OpenAI output) — upvoted replies make good few-shot examples for
-  the reply prompt (or a fine-tuning set); the original post is stored as context.
+- **Replies** (Workers AI / Gemma output) — upvoted replies make good few-shot
+  examples for the reply prompt (or a fine-tuning set); the original post is
+  stored as context.
 
 Each item stores a single vote label (`1` up, `0` none, `-1` down); clicking an
 active button again clears it. Export the raw labels any time via `GET /api/feedback`.

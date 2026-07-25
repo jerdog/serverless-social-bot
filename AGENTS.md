@@ -6,7 +6,7 @@ Guidance for AI coding agents (and humans) working in this repository.
 
 A serverless social media bot that generates original posts with **Markov chain**
 text generation and posts them to **Mastodon** and **Bluesky**. It can also
-generate **AI-powered replies** (via the OpenAI API) to mentions/replies it
+generate **AI-powered replies** (via Cloudflare Workers AI — Gemma 4) to mentions/replies it
 receives. It runs on **Cloudflare Workers**, triggered on a cron schedule and via
 HTTP endpoints, and persists state in **Cloudflare KV**.
 
@@ -20,7 +20,7 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 | --- | --- |
 | `worker.js` | Cloudflare Worker entry point. Defines `fetch` (HTTP routes) and `scheduled` (cron) handlers, sets up `process.env` from Worker bindings, and orchestrates the bot. |
 | `bot.js` | Core logic: config loading, text cleaning, the `MarkovChain` class, source fetching, and posting to Mastodon/Bluesky. |
-| `replies.js` | Reply handling: fetch original posts, generate replies via OpenAI, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache and the reusable `LocalStorage` fallback. |
+| `replies.js` | Reply handling: fetch original posts, generate replies via the Workers AI binding, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache and the reusable `LocalStorage` fallback. |
 | `feedback.js` | Records every generated post/reply into `POSTS_KV` under a `feedback:` prefix and stores per-item up/down votes for model tuning. |
 | `dashboard.js` | Returns the self-contained HTML feedback dashboard served at `/dashboard`. |
 | `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus). |
@@ -54,7 +54,7 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
   tweets + live timeline posts) → `generatePost()` (Markov) → `postToSocialMedia()`.
 - **Reply flow:** `checkNotifications()` (in `worker.js`) polls Mastodon/Bluesky
   notifications → `handleMastodonReply` / `handleBlueskyReply` in `replies.js` →
-  `generateReply()` (OpenAI) → post + mark handled in KV.
+  `generateReply()` (Workers AI via the `AI` binding) → post + mark handled in KV.
 
 ## HTTP endpoints (see `worker.js`)
 
@@ -102,7 +102,10 @@ of ESM + Jest. Run individual tests with, e.g.,
 - Never commit real credentials. Secrets are provided via `wrangler secret put ...`
   in production and `.dev.vars` locally (git-ignored; see `.dev.vars.example`).
 - Required: `MASTODON_API_URL`, `MASTODON_ACCESS_TOKEN`, `BLUESKY_API_URL`,
-  `BLUESKY_USERNAME`, `BLUESKY_PASSWORD`. `OPENAI_API_KEY` is required for replies.
+  `BLUESKY_USERNAME`, `BLUESKY_PASSWORD`. Replies use the Workers AI `AI` binding
+  (declared in `wrangler.toml`) — no reply API key. `initAI(env.AI)` runs in
+  `setupEnvironment`; model/params come from `WORKERS_AI_MODEL` / `AI_MAX_TOKENS`
+  / `AI_TEMPERATURE` (plain vars, read via `process.env`).
 - Optional tuning: `MARKOV_STATE_SIZE`, `MARKOV_MIN_CHARS`, `MARKOV_MAX_CHARS`,
   `MARKOV_MAX_TRIES`, `MASTODON_SOURCE_ACCOUNTS`, `BLUESKY_SOURCE_ACCOUNTS`,
   `EXCLUDED_WORDS`, `DEBUG_MODE`, `DEBUG_LEVEL`.

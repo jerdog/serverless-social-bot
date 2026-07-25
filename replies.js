@@ -1,6 +1,17 @@
 import { debug, getBlueskyAuth, debugId } from './bot.js';
 import { recordContent } from './feedback.js';
 
+// Default Workers AI text-generation model. Gemma 4 26B A4B is a Mixture-of-
+// Experts model (26B total params, ~4B active per pass), so it runs close to
+// 4B-model speed while keeping larger-model quality. Override via WORKERS_AI_MODEL.
+const DEFAULT_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+
+// Workers AI binding (env.AI), injected by the Worker at request/cron time.
+let aiBinding = null;
+function initAI(binding) {
+    aiBinding = binding;
+}
+
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
 
@@ -309,7 +320,7 @@ async function getOriginalPost(platform, postId) {
     return post.content;
 }
 
-// Track rate limit state for OpenAI (exponential backoff after a 429)
+// Track backoff state for Workers AI (exponential backoff after a capacity error)
 const INITIAL_BACKOFF_MINUTES = 5;
 const rateLimitState = {
     backoffMinutes: INITIAL_BACKOFF_MINUTES,
@@ -333,7 +344,7 @@ function getFallbackResponse() {
     return fallbackResponses[index];
 }
 
-// Generate a reply using OpenAI
+// Generate a reply using Workers AI (Gemma 4 by default).
 async function generateReply(originalPost, replyContent) {
     try {
         if (!originalPost || !replyContent) {
@@ -344,71 +355,58 @@ async function generateReply(originalPost, replyContent) {
             return null;
         }
 
-        debug('Generating reply with OpenAI', 'info', {
+        if (!aiBinding) {
+            debug('Workers AI binding not initialized, cannot generate reply', 'error');
+            return null;
+        }
+
+        debug('Generating reply with Workers AI', 'info', {
             originalPost: originalPost?.substring(0, 100),
             replyContent: replyContent?.substring(0, 100)
         });
 
-        // Clean up the posts
-        const cleanOriginal = originalPost
-            .replace(/<[^>]*>/g, '') // Remove HTML tags
-            .replace(/\s+/g, ' ') // Normalize whitespace
-            .replace(/@[\w]+/g, '') // Remove user mentions
-            .trim();
-
-        const cleanReplyContent = replyContent
+        // Strip HTML, mentions, and extra whitespace from both sides of the thread.
+        const clean = (text) => text
             .replace(/<[^>]*>/g, '')
+            .replace(/@[\w]+/g, '')
             .replace(/\s+/g, ' ')
-            .replace(/@[\w]+/g, '') // Remove user mentions
             .trim();
+        const cleanOriginal = clean(originalPost);
+        const cleanReplyContent = clean(replyContent);
 
-        // Create the prompt
-        const prompt = `As a witty and engaging social media bot, generate a brief, clever reply to this conversation. 
-DO NOT include any @mentions or usernames in your response - those will be handled separately.
-DO NOT use hashtags unless they're contextually relevant.
-Keep the response under 400 characters.
-
-Original post: "${cleanOriginal}"
-Reply to original: "${cleanReplyContent}"
-
-Generate a witty response that:
-1. Is relevant to the conversation
-2. Shows personality but stays respectful
-3. Encourages further engagement
-4. Is concise and to the point
-
-Your response:`;
-
-        // If we're still inside a rate-limit backoff window, skip the API call.
+        // If we're still inside a backoff window, skip the call and use a fallback.
         if (rateLimitState.resetTime && Date.now() < rateLimitState.resetTime) {
-            debug('OpenAI rate-limited, using fallback response', 'warn', {
+            debug('Workers AI backing off, using fallback response', 'warn', {
                 resetTime: new Date(rateLimitState.resetTime).toISOString()
             });
             return getFallbackResponse();
         }
 
-        // Get completion from OpenAI
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-                'Content-Type': 'application/json'
+        // Tight system prompt keeps input tokens (and latency) low; the reply
+        // itself is short, so max_tokens is capped well under the model default.
+        const messages = [
+            {
+                role: 'system',
+                content: 'You are a witty, engaging social media bot. Reply with one clever, concise, respectful line under 400 characters. Do not include @mentions, usernames, or hashtags unless clearly relevant. Output only the reply text.'
             },
-            body: JSON.stringify({
-                model: 'gpt-4',
-                messages: [{
-                    role: 'user',
-                    content: prompt
-                }],
-                temperature: 0.7,
-                max_tokens: 150
-            })
-        });
+            {
+                role: 'user',
+                content: `Original post: "${cleanOriginal}"\nReply to it: "${cleanReplyContent}"`
+            }
+        ];
 
-        // On a rate-limit response, back off exponentially and return a fallback.
-        if (response.status === 429) {
+        const model = process.env.WORKERS_AI_MODEL || DEFAULT_AI_MODEL;
+        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '120', 10);
+        const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
+
+        let result;
+        try {
+            result = await aiBinding.run(model, { messages, max_tokens: maxTokens, temperature });
+        } catch (aiError) {
+            // Treat inference/capacity errors as a signal to back off exponentially.
             rateLimitState.resetTime = Date.now() + rateLimitState.backoffMinutes * 60 * 1000;
-            debug('OpenAI rate limit hit, backing off', 'warn', {
+            debug('Workers AI call failed, backing off', 'warn', {
+                error: aiError.message,
                 backoffMinutes: rateLimitState.backoffMinutes,
                 resetTime: new Date(rateLimitState.resetTime).toISOString()
             });
@@ -419,30 +417,20 @@ Your response:`;
             return getFallbackResponse();
         }
 
-        if (!response.ok) {
-            debug('OpenAI API error:', 'error', {
-                status: response.status,
-                statusText: response.statusText
-            });
-            return null;
-        }
-
         // Successful call — clear any backoff state.
         rateLimitState.backoffMinutes = INITIAL_BACKOFF_MINUTES;
         rateLimitState.resetTime = null;
 
-        const data = await response.json();
-        const reply = data.choices[0]?.message?.content?.trim();
-
+        const reply = (result && typeof result.response === 'string') ? result.response.trim() : '';
         if (!reply) {
-            debug('No reply generated from OpenAI', 'warn');
+            debug('No reply generated from Workers AI', 'warn', { result });
             return null;
         }
 
-        // Clean up any remaining mentions or formatting
+        // Clean up any remaining mentions or wrapping quotes.
         const cleanReply = reply
-            .replace(/@[\w]+/g, '') // Remove any mentions that might have slipped through
-            .replace(/^["']|["']$/g, '') // Remove quotes if present
+            .replace(/@[\w]+/g, '')
+            .replace(/^["']|["']$/g, '')
             .trim();
 
         debug('Generated reply', 'info', { reply: cleanReply });
@@ -736,5 +724,6 @@ export {
     storeRecentPost,
     getOriginalPost,
     initializeKV,
+    initAI,
     LocalStorage
 };

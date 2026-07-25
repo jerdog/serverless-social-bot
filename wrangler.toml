@@ -9,6 +9,9 @@ crons = ["0 */2 * * *"]  # Run every 2 hours
 [build]
 command = "npm install"
 
+[ai]
+binding = "AI"   # Workers AI binding, used for reply generation (Gemma 4)
+
 [vars]
 DEBUG_MODE = "false"  # change this to start publishing live
 DEBUG_LEVEL = "verbose"
@@ -18,6 +21,9 @@ MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
 MASTODON_API_URL = "https://hachyderm.io"
 BLUESKY_API_URL = "https://bsky.social"
+WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # Workers AI reply model
+AI_MAX_TOKENS = "120"   # replies are short; keep generation cheap/fast
+AI_TEMPERATURE = "0.7"  # a bit of wit without going off the rails
 
 [[kv_namespaces]]
 binding = "SOURCE_TWEETS"   # KV namespace for storing source tweets

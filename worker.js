@@ -1,7 +1,7 @@
 // Import only the necessary functions
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, loadRecentPostsFromKV } from './replies.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI, loadRecentPostsFromKV } from './replies.js';
 import { initFeedback, recordVote, listFeedback, summarizeFeedback } from './feedback.js';
 import { renderDashboard } from './dashboard.js';
 
@@ -35,8 +35,16 @@ async function setupEnvironment(env) {
             MARKOV_MIN_CHARS: env.MARKOV_MIN_CHARS || '100',
             MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
             MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
-            OPENAI_API_KEY: env.OPENAI_API_KEY || ''
+            WORKERS_AI_MODEL: env.WORKERS_AI_MODEL || '',
+            AI_MAX_TOKENS: env.AI_MAX_TOKENS || '',
+            AI_TEMPERATURE: env.AI_TEMPERATURE || ''
         };
+
+        // Workers AI is accessed via the `AI` binding, not process.env.
+        initAI(env.AI);
+        if (!env.AI) {
+            debug('No AI binding found in env; reply generation will be disabled', 'warn');
+        }
         
         // Initialize KV namespace
         if (env.POSTS_KV) {

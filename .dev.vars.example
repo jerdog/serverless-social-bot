@@ -13,6 +13,12 @@ MASTODON_SOURCE_ACCOUNTS=@user@mastodon.social,@another@instance.social # Accoun
 # Content Filtering (comma-separated, no brackets/quotes)
 EXCLUDED_WORDS=word1,word2,word3
 
+# Reply Generation
+# Replies are generated with Workers AI via the `AI` binding (see wrangler.toml) —
+# no API key is required. Note: Workers AI always runs against your Cloudflare
+# account and incurs usage charges even under `wrangler dev`. Optional model
+# tuning vars (WORKERS_AI_MODEL, AI_MAX_TOKENS, AI_TEMPERATURE) live in wrangler.toml.
+
 # Debug Configuration (Optional)
 DEBUG_MODE=true
 DEBUG_LEVEL=verbose  # or "info"

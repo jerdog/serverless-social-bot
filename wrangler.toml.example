@@ -7,6 +7,10 @@ main = "worker.js"
 # Compatibility date for Workers runtime features
 compatibility_date = "2024-11-06"
 
+# Workers AI binding (used for reply generation with Gemma 4)
+[ai]
+binding = "AI"
+
 # Configure your Workers environment
 [vars]
 # Example environment variables (DO NOT put actual values here)
@@ -16,6 +20,9 @@ BLUESKY_API_URL = "https://bsky.social"
 BLUESKY_USERNAME = "your.handle.bsky.social"
 BLUESKY_PASSWORD = "your_app_password"
 DEBUG_MODE = "false"
+WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # optional; this is the default
+AI_MAX_TOKENS = "120"    # optional
+AI_TEMPERATURE = "0.7"   # optional
 
 # Development environment variables
 [env.development]
