@@ -2,6 +2,12 @@
 import fetch from 'node-fetch';
 import { getSourceTweets } from './kv.js';
 import { storeRecentPost } from './replies.js';
+import { recordContent } from './feedback.js';
+
+// Generate a unique id for content created in debug mode (no real post id).
+function debugId() {
+    return `debug-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
 
 // HTML processing functions
 function decodeHtmlEntities(text) {
@@ -544,6 +550,7 @@ async function postToMastodon(content) {
                 content,
                 platform: 'mastodon'
             });
+            await recordContent({ type: 'post', platform: 'mastodon', id: debugId(), content });
             return true;
         }
 
@@ -578,7 +585,8 @@ async function postToMastodon(content) {
         // Store the post in our cache using the numeric ID
         try {
             await storeRecentPost('mastodon', data.id, content);
-            debug('Post stored in cache', 'info', { 
+            await recordContent({ type: 'post', platform: 'mastodon', id: data.id, content });
+            debug('Post stored in cache', 'info', {
                 id: data.id,
                 content: content.substring(0, 50) + '...'
             });
@@ -602,6 +610,7 @@ async function postToBluesky(content) {
                 content,
                 platform: 'bluesky'
             });
+            await recordContent({ type: 'post', platform: 'bluesky', id: debugId(), content });
             return true;
         }
 
@@ -648,12 +657,13 @@ async function postToBluesky(content) {
         // Store the post in our cache
         try {
             await storeRecentPost('bluesky', data.uri, content);
+            await recordContent({ type: 'post', platform: 'bluesky', id: data.uri, content });
             debug('Post stored in cache', 'info', { uri: data.uri });
         } catch (error) {
             debug('Error storing post:', 'error', error);
             // Continue even if storage fails - we don't want to fail the post
         }
-        
+
         return true;
     } catch (error) {
         debug('Error posting to Bluesky:', 'error', error);
@@ -747,4 +757,4 @@ async function main(env) {
 }
 
 // Export for worker
-export { debug, main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth };
+export { debug, main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth, debugId };

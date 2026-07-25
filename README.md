@@ -128,6 +128,27 @@ Debug mode: Would reply to Mastodon post: [reply content]
 - `GET /upload-tweets` - Get source content count
 - `POST /test-reply` - Test AI-powered reply generation
 - `POST /check-replies` - Check for and process new replies
+- `GET /dashboard` - Feedback dashboard for upvoting/downvoting generated content
+- `GET /api/feedback` - JSON list of recorded posts/replies with votes (optional `?type=post|reply`)
+- `POST /api/vote` - Record a vote: `{ "type", "platform", "id", "vote" }` where `vote` is `1`, `0`, or `-1`
+
+## Feedback Dashboard
+
+Every post and reply the bot generates (including in debug mode) is recorded to
+the `POSTS_KV` namespace under a `feedback:` prefix. Visit `/dashboard` in a
+browser to review that content and **upvote** or **downvote** each item, building
+a labeled dataset you can use to tune the model over time:
+
+- **Posts** (Markov output) — downvoted examples flag corpus/source accounts to
+  prune; upvoted examples are candidates to promote into the source corpus.
+- **Replies** (OpenAI output) — upvoted replies make good few-shot examples for
+  the reply prompt (or a fine-tuning set); the original post is stored as context.
+
+Each item stores a single vote label (`1` up, `0` none, `-1` down); clicking an
+active button again clears it. Export the raw labels any time via `GET /api/feedback`.
+
+> Note: like the other endpoints, the dashboard is currently unauthenticated —
+> put it behind Cloudflare Access (or add a token check) before exposing it publicly.
 
 ## Deployment
 

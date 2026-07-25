@@ -1,4 +1,5 @@
-import { debug, getBlueskyAuth } from './bot.js';
+import { debug, getBlueskyAuth, debugId } from './bot.js';
+import { recordContent } from './feedback.js';
 
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
@@ -570,7 +571,14 @@ async function handleMastodonReply(notification) {
 
             const postedReply = await response.json();
             await storeRecentPost('mastodon', postedReply.id, replyWithMention);
-            
+            await recordContent({
+                type: 'reply',
+                platform: 'mastodon',
+                id: postedReply.id,
+                content: replyWithMention,
+                context: originalPost
+            });
+
             // Mark as replied to prevent duplicate replies
             await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
             
@@ -585,6 +593,13 @@ async function handleMastodonReply(notification) {
                 content: replyWithMention,
                 inReplyTo: notification.status.id,
                 userHandle
+            });
+            await recordContent({
+                type: 'reply',
+                platform: 'mastodon',
+                id: debugId(),
+                content: replyWithMention,
+                context: originalPost
             });
             // Even in debug mode, mark as replied to prevent duplicate processing
             await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
@@ -638,6 +653,13 @@ async function handleBlueskyReply(notification) {
                 generatedReply,
                 notification
             });
+            await recordContent({
+                type: 'reply',
+                platform: 'bluesky',
+                id: debugId(),
+                content: generatedReply,
+                context: originalPost
+            });
             // Still store that we "replied" to prevent duplicate debug logs
             await getKVNamespace().put(replyKey, 'true');
             debug('Marked post as replied to (debug mode)', 'info', { replyKey });
@@ -687,7 +709,15 @@ async function handleBlueskyReply(notification) {
             throw new Error(`Failed to post reply: ${errorData}`);
         }
 
-        // Mark this post as replied to
+        // Record the reply for feedback, then mark this post as replied to
+        const postedReply = await response.json();
+        await recordContent({
+            type: 'reply',
+            platform: 'bluesky',
+            id: postedReply.uri || notification.uri,
+            content: generatedReply,
+            context: originalPost
+        });
         await getKVNamespace().put(replyKey, 'true');
         debug('Successfully replied to Bluesky post', 'info', { replyKey });
 
@@ -705,5 +735,6 @@ export {
     loadRecentPostsFromKV,
     storeRecentPost,
     getOriginalPost,
-    initializeKV
+    initializeKV,
+    LocalStorage
 };

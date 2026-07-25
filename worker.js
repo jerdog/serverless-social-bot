@@ -2,6 +2,8 @@
 import { main, debug, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
 import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, loadRecentPostsFromKV } from './replies.js';
+import { initFeedback, recordVote, listFeedback, summarizeFeedback } from './feedback.js';
+import { renderDashboard } from './dashboard.js';
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -45,14 +47,16 @@ async function setupEnvironment(env) {
 
             // Initialize KV first
             await initializeKV(env.POSTS_KV);
+            initFeedback(env.POSTS_KV);
             debug('KV initialization complete');
-            
+
             // Then load existing posts
             debug('Loading posts from KV...');
             await loadRecentPostsFromKV();
             debug('Posts loaded successfully');
         } else {
-            debug('No POSTS_KV found in env', 'warn', { 
+            initFeedback(null);
+            debug('No POSTS_KV found in env', 'warn', {
                 availableBindings: Object.keys(env).filter(key => key.includes('KV')),
                 envType: typeof env,
                 envIsNull: env === null,
@@ -251,6 +255,66 @@ export default {
                     }), {
                         headers: { 'Content-Type': 'application/json' }
                     });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
+            // Serve the feedback dashboard
+            if (url.pathname === '/dashboard') {
+                if (request.method === 'GET') {
+                    return new Response(renderDashboard(), {
+                        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+                    });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
+            // Feedback data for the dashboard
+            if (url.pathname === '/api/feedback') {
+                if (request.method === 'GET') {
+                    const type = url.searchParams.get('type');
+                    const items = await listFeedback({ type: type || null });
+                    return new Response(JSON.stringify({
+                        items,
+                        stats: summarizeFeedback(items)
+                    }), {
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
+            // Record an up/down vote
+            if (url.pathname === '/api/vote') {
+                if (request.method === 'POST') {
+                    let payload;
+                    try {
+                        payload = await request.json();
+                    } catch (parseError) {
+                        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    const { type, platform, id, vote } = payload;
+                    try {
+                        const record = await recordVote({ type, platform, id, vote });
+                        if (!record) {
+                            return new Response(JSON.stringify({ error: 'Item not found' }), {
+                                status: 404,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                        }
+                        return new Response(JSON.stringify({ success: true, record }), {
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    } catch (voteError) {
+                        return new Response(JSON.stringify({ error: voteError.message }), {
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
                 }
                 return new Response('Method not allowed', { status: 405 });
             }

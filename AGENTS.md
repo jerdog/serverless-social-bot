@@ -20,7 +20,9 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 | --- | --- |
 | `worker.js` | Cloudflare Worker entry point. Defines `fetch` (HTTP routes) and `scheduled` (cron) handlers, sets up `process.env` from Worker bindings, and orchestrates the bot. |
 | `bot.js` | Core logic: config loading, text cleaning, the `MarkovChain` class, source fetching, and posting to Mastodon/Bluesky. |
-| `replies.js` | Reply handling: fetch original posts, generate replies via OpenAI, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache. |
+| `replies.js` | Reply handling: fetch original posts, generate replies via OpenAI, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache and the reusable `LocalStorage` fallback. |
+| `feedback.js` | Records every generated post/reply into `POSTS_KV` under a `feedback:` prefix and stores per-item up/down votes for model tuning. |
+| `dashboard.js` | Returns the self-contained HTML feedback dashboard served at `/dashboard`. |
 | `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus). |
 | `assets/tweets.txt` | Local sample corpus used by tests. |
 | `tests/` | Jest tests (`bot.test.js`, `markov.test.js`) + `setup.js`. |
@@ -39,8 +41,13 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 - **Two KV namespaces** (see `wrangler.toml`):
   - `SOURCE_TWEETS` — the Markov training corpus, written by `/upload-tweets`,
     read by `kv.js`.
-  - `POSTS_KV` — the bot's own recent posts and `replied:*` dedupe markers,
-    managed by `replies.js`.
+  - `POSTS_KV` — the bot's own recent posts and `replied:*` dedupe markers
+    (managed by `replies.js`), plus `feedback:*` records (managed by `feedback.js`).
+- **Feedback recording:** `bot.js` (posts) and `replies.js` (replies) call
+  `recordContent()` from `feedback.js` on every generated item, including in
+  `DEBUG_MODE`, so the `/dashboard` list is populated even during dry runs. Votes
+  are a single label per item (`1`/`0`/`-1`), not a running tally — set via
+  `/api/vote`. When adding a new place the bot emits content, record it there too.
 - **Config object:** `loadConfig()` in `bot.js` validates required env vars and
   builds the module-global `CONFIG`. Call it before anything that reads `CONFIG`.
 - **Posting flow:** `main()` → 30% random gate → `fetchTextContent()` (source
@@ -56,6 +63,9 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 - `GET /upload-tweets` — return the stored corpus count.
 - `POST /test-reply` — generate a reply for a given `postUrl`/`replyContent` without posting.
 - `POST /check-replies` — poll and process notifications.
+- `GET /dashboard` — HTML feedback dashboard (upvote/downvote generated content).
+- `GET /api/feedback` — JSON list of recorded items + stats (optional `?type=post|reply`).
+- `POST /api/vote` — set a vote: `{ type, platform, id, vote }`, `vote` ∈ `{1,0,-1}`.
 
 ## Commands
 

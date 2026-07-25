@@ -26,6 +26,10 @@
   "files": [
     "bot.js",
     "worker.js",
+    "replies.js",
+    "kv.js",
+    "feedback.js",
+    "dashboard.js",
     "wrangler.toml",
     "assets/",
     "README.md",
