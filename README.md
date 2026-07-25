@@ -69,6 +69,31 @@ capacity limits), the bot backs off exponentially and returns a short fallback l
 > Workers AI runs against your Cloudflare account and incurs usage charges even
 > during `wrangler dev`.
 
+### Enabling Workers AI
+
+Workers AI has no separate "enable" switch — it is provisioned by the `AI`
+binding, and the first inference request activates it automatically. To set it up:
+
+1. Sign up for / log into Cloudflare and authenticate Wrangler:
+   ```bash
+   npx wrangler login
+   ```
+2. Make sure the binding exists in `wrangler.toml` (it does by default in this repo):
+   ```toml
+   [ai]
+   binding = "AI"
+   ```
+   Alternatively, add it from the dashboard: **Workers & Pages → your Worker →
+   Settings → Bindings → Add → Workers AI**, with variable name `AI`, then redeploy.
+3. Deploy the Worker:
+   ```bash
+   npm run deploy
+   ```
+
+Browse available models and monitor neuron usage under **AI → Workers AI** in the
+[Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/ai/workers-ai).
+See the [Workers AI docs](https://developers.cloudflare.com/workers-ai/) for details.
+
 ## Debug Mode
 
 The bot includes a comprehensive debug mode that allows you to test functionality without actually posting to social media platforms.
@@ -166,7 +191,10 @@ a labeled dataset you can use to tune the model over time:
   stored as context.
 
 Each item stores a single vote label (`1` up, `0` none, `-1` down); clicking an
-active button again clears it. Export the raw labels any time via `GET /api/feedback`.
+active button again clears it. Every item is also tagged with the model that
+produced it (`markov` for posts, the Workers AI model id for replies) and shown as
+a badge, so your votes stay comparable across model swaps. Export the raw labels
+any time via `GET /api/feedback`.
 
 > Note: like the other endpoints, the dashboard is currently unauthenticated —
 > put it behind Cloudflare Access (or add a token check) before exposing it publicly.

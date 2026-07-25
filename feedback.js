@@ -27,7 +27,7 @@ function feedbackKey(type, platform, id) {
 
 // Record a generated item so it can be rated. Idempotent: re-recording the same
 // id preserves any existing vote rather than resetting it.
-async function recordContent({ type, platform, id, content, context = null }) {
+async function recordContent({ type, platform, id, content, context = null, model = null }) {
     if (!feedbackKV) {
         debug('Feedback storage not initialized, skipping record', 'warn');
         return null;
@@ -50,6 +50,7 @@ async function recordContent({ type, platform, id, content, context = null }) {
             type,
             content,
             context,
+            model,
             createdAt: new Date().toISOString(),
             vote: 0
         };

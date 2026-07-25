@@ -12,6 +12,12 @@ function initAI(binding) {
     aiBinding = binding;
 }
 
+// The Workers AI model currently used for replies (also stored on feedback
+// records so votes can be compared across model swaps).
+function getReplyModel() {
+    return process.env.WORKERS_AI_MODEL || DEFAULT_AI_MODEL;
+}
+
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
 
@@ -395,7 +401,7 @@ async function generateReply(originalPost, replyContent) {
             }
         ];
 
-        const model = process.env.WORKERS_AI_MODEL || DEFAULT_AI_MODEL;
+        const model = getReplyModel();
         const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '120', 10);
         const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
 
@@ -564,7 +570,8 @@ async function handleMastodonReply(notification) {
                 platform: 'mastodon',
                 id: postedReply.id,
                 content: replyWithMention,
-                context: originalPost
+                context: originalPost,
+                model: getReplyModel()
             });
 
             // Mark as replied to prevent duplicate replies
@@ -587,7 +594,8 @@ async function handleMastodonReply(notification) {
                 platform: 'mastodon',
                 id: debugId(),
                 content: replyWithMention,
-                context: originalPost
+                context: originalPost,
+                model: getReplyModel()
             });
             // Even in debug mode, mark as replied to prevent duplicate processing
             await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
@@ -646,7 +654,8 @@ async function handleBlueskyReply(notification) {
                 platform: 'bluesky',
                 id: debugId(),
                 content: generatedReply,
-                context: originalPost
+                context: originalPost,
+                model: getReplyModel()
             });
             // Still store that we "replied" to prevent duplicate debug logs
             await getKVNamespace().put(replyKey, 'true');
@@ -704,7 +713,8 @@ async function handleBlueskyReply(notification) {
             platform: 'bluesky',
             id: postedReply.uri || notification.uri,
             content: generatedReply,
-            context: originalPost
+            context: originalPost,
+            model: getReplyModel()
         });
         await getKVNamespace().put(replyKey, 'true');
         debug('Successfully replied to Bluesky post', 'info', { replyKey });

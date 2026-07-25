@@ -23,6 +23,16 @@ describe('feedback', () => {
         expect(rec.content).toBe('hello world');
     });
 
+    test('recordContent stores the model label', async () => {
+        const rec = await recordContent({
+            type: 'reply', platform: 'bluesky', id: 'm1', content: 'hi',
+            model: '@cf/google/gemma-4-26b-a4b-it'
+        });
+        expect(rec.model).toBe('@cf/google/gemma-4-26b-a4b-it');
+        const [listed] = await listFeedback({ type: 'reply' });
+        expect(listed.model).toBe('@cf/google/gemma-4-26b-a4b-it');
+    });
+
     test('recordContent rejects invalid input', async () => {
         expect(await recordContent({ type: 'bogus', platform: 'x', id: '1', content: 'y' })).toBeNull();
         expect(await recordContent({ type: 'post', platform: '', id: '1', content: 'y' })).toBeNull();

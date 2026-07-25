@@ -550,7 +550,7 @@ async function postToMastodon(content) {
                 content,
                 platform: 'mastodon'
             });
-            await recordContent({ type: 'post', platform: 'mastodon', id: debugId(), content });
+            await recordContent({ type: 'post', platform: 'mastodon', id: debugId(), content, model: 'markov' });
             return true;
         }
 
@@ -585,7 +585,7 @@ async function postToMastodon(content) {
         // Store the post in our cache using the numeric ID
         try {
             await storeRecentPost('mastodon', data.id, content);
-            await recordContent({ type: 'post', platform: 'mastodon', id: data.id, content });
+            await recordContent({ type: 'post', platform: 'mastodon', id: data.id, content, model: 'markov' });
             debug('Post stored in cache', 'info', {
                 id: data.id,
                 content: content.substring(0, 50) + '...'
@@ -610,7 +610,7 @@ async function postToBluesky(content) {
                 content,
                 platform: 'bluesky'
             });
-            await recordContent({ type: 'post', platform: 'bluesky', id: debugId(), content });
+            await recordContent({ type: 'post', platform: 'bluesky', id: debugId(), content, model: 'markov' });
             return true;
         }
 
@@ -657,7 +657,7 @@ async function postToBluesky(content) {
         // Store the post in our cache
         try {
             await storeRecentPost('bluesky', data.uri, content);
-            await recordContent({ type: 'post', platform: 'bluesky', id: data.uri, content });
+            await recordContent({ type: 'post', platform: 'bluesky', id: data.uri, content, model: 'markov' });
             debug('Post stored in cache', 'info', { uri: data.uri });
         } catch (error) {
             debug('Error storing post:', 'error', error);

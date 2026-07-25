@@ -67,6 +67,7 @@ export function renderDashboard() {
     background: var(--badge); color: var(--muted); border-radius: 6px;
     padding: 2px 8px; font-size: 12px; text-transform: capitalize;
   }
+  .badge.model { text-transform: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   .time { color: var(--muted); font-size: 12px; }
   .empty, .error { text-align: center; color: var(--muted); padding: 48px 16px; }
   .error { color: var(--down); }
@@ -170,6 +171,12 @@ export function renderDashboard() {
       badge.textContent = t;
       meta.appendChild(badge);
     });
+    if (item.model) {
+      var modelBadge = document.createElement('span');
+      modelBadge.className = 'badge model';
+      modelBadge.textContent = item.model;
+      meta.appendChild(modelBadge);
+    }
     var time = document.createElement('span');
     time.className = 'time';
     time.textContent = fmtTime(item.createdAt);

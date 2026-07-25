@@ -45,9 +45,12 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
     (managed by `replies.js`), plus `feedback:*` records (managed by `feedback.js`).
 - **Feedback recording:** `bot.js` (posts) and `replies.js` (replies) call
   `recordContent()` from `feedback.js` on every generated item, including in
-  `DEBUG_MODE`, so the `/dashboard` list is populated even during dry runs. Votes
+  `DEBUG_MODE`, so the `/dashboard` list is populated even during dry runs. Each
+  record carries a `model` label (`markov` for posts, the Workers AI model id for
+  replies via `getReplyModel()`) so votes stay comparable across model swaps. Votes
   are a single label per item (`1`/`0`/`-1`), not a running tally — set via
-  `/api/vote`. When adding a new place the bot emits content, record it there too.
+  `/api/vote`. When adding a new place the bot emits content, record it there too
+  (with its `model`).
 - **Config object:** `loadConfig()` in `bot.js` validates required env vars and
   builds the module-global `CONFIG`. Call it before anything that reads `CONFIG`.
 - **Posting flow:** `main()` → 30% random gate → `fetchTextContent()` (source
