@@ -8,7 +8,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - Generates unique social media content using Markov chains
 - Configurable parameters for content generation
 - Filters out excluded words and phrases
-- 30% random posting probability
+- Configurable random posting probability (default 30%, via `POST_PROBABILITY`)
 
 ### Multi-Platform Support
 - Posts to Mastodon
@@ -49,6 +49,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MARKOV_MIN_CHARS` - Minimum characters in generated post (default: 100)
 - `MARKOV_MAX_CHARS` - Maximum characters in generated post (default: 280)
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
+- `POST_PROBABILITY` - Chance (0-1) that each run posts (default: 0.3). Set to `1` to always post — handy for testing with `DEBUG_MODE=true`.
 - `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/google/gemma-4-26b-a4b-it`)
 - `AI_MAX_TOKENS` - Max tokens per generated reply (default: 120)
 - `AI_TEMPERATURE` - Sampling temperature for replies (default: 0.7)
@@ -178,7 +179,7 @@ Debug mode: Would reply to Mastodon post: [reply content]
 
 ## API Endpoints
 
-- `POST /run` - Execute the bot (30% chance to post)
+- `POST /run` - Execute the bot (posts with probability `POST_PROBABILITY`, default 30%)
 - `POST /upload-tweets` - Upload source content
 - `GET /upload-tweets` - Get source content count
 - `POST /test-reply` - Test AI-powered reply generation
@@ -248,7 +249,7 @@ token and find the account id.
 
 ## Behavior
 
-- The bot has a 30% chance of posting each time it runs
+- The bot posts with probability `POST_PROBABILITY` (default 30%) each time it runs
 - When posting, it will attempt to post to both Mastodon and Bluesky
 - Generated content is based on source content from specified accounts
 - Content is filtered to remove excluded words

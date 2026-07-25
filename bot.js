@@ -84,6 +84,13 @@ async function loadConfig() {
     const markovMaxChars = parseInt(process.env.MARKOV_MAX_CHARS || '280', 10);
     const markovMaxTries = parseInt(process.env.MARKOV_MAX_TRIES || '100', 10);
 
+    // Probability (0-1) that a /run or scheduled tick actually posts. Default 0.3.
+    // Set to 1 to always post (useful for testing with DEBUG_MODE on).
+    let postProbability = parseFloat(process.env.POST_PROBABILITY);
+    if (!Number.isFinite(postProbability) || postProbability < 0 || postProbability > 1) {
+        postProbability = 0.3;
+    }
+
     // Parse optional array parameters
     const mastodonSourceAccounts = process.env.MASTODON_SOURCE_ACCOUNTS
         ? process.env.MASTODON_SOURCE_ACCOUNTS.split(',').map(a => a.trim())
@@ -120,6 +127,7 @@ async function loadConfig() {
         markovMinChars,
         markovMaxChars,
         markovMaxTries,
+        postProbability,
         mastodonSourceAccounts,
         blueskySourceAccounts,
         excludedWords,
@@ -688,21 +696,23 @@ async function main(env) {
                 maxChars: CONFIG.markovMaxChars,
                 maxTries: CONFIG.markovMaxTries
             },
+            postProbability: CONFIG.postProbability,
             mastodonAccounts: CONFIG.mastodonSourceAccounts,
             blueskyAccounts: CONFIG.blueskySourceAccounts,
             excludedWords: CONFIG.excludedWords
         });
 
-        // 30% chance to post
+        // Post only some of the time (POST_PROBABILITY, default 0.3).
+        const threshold = CONFIG.postProbability;
         const randomValue = Math.random();
-        debug(`Random value generated: ${(randomValue * 100).toFixed(2)}%`, 'info');
-        
-        if (randomValue > 0.3) {
-            debug('Skipping post based on random chance (above 30% threshold)', 'info');
+        debug(`Random value generated: ${(randomValue * 100).toFixed(2)}% (post threshold: ${(threshold * 100).toFixed(0)}%)`, 'info');
+
+        if (randomValue > threshold) {
+            debug('Skipping post based on random chance', 'info');
             return;
         }
 
-        debug('Proceeding with post (within 30% threshold)', 'info');
+        debug('Proceeding with post', 'info');
 
         // Fetch content for generation
         const content = await fetchTextContent(env);

@@ -19,6 +19,7 @@ MARKOV_STATE_SIZE = "2"
 MARKOV_MAX_TRIES = "100"
 MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
+POST_PROBABILITY = "0.3"  # chance each run posts (0-1); set to "1" to always post
 MASTODON_API_URL = "https://hachyderm.io"
 BLUESKY_API_URL = "https://bsky.social"
 WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # Workers AI reply model

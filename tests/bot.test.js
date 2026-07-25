@@ -76,6 +76,21 @@ describe('Bot', () => {
             expect(config.markovMinChars).toBe(100); // default value
             expect(config.markovMaxChars).toBe(280); // default value
             expect(config.markovMaxTries).toBe(100); // default value
+            expect(config.postProbability).toBe(0.3); // default value
+        });
+
+        test('parses POST_PROBABILITY and clamps invalid values to the default', async () => {
+            Object.assign(process.env, TEST_ENV, { POST_PROBABILITY: '1' });
+            expect((await loadConfig()).postProbability).toBe(1);
+
+            Object.assign(process.env, TEST_ENV, { POST_PROBABILITY: '0.5' });
+            expect((await loadConfig()).postProbability).toBe(0.5);
+
+            Object.assign(process.env, TEST_ENV, { POST_PROBABILITY: 'nonsense' });
+            expect((await loadConfig()).postProbability).toBe(0.3);
+
+            Object.assign(process.env, TEST_ENV, { POST_PROBABILITY: '2' });
+            expect((await loadConfig()).postProbability).toBe(0.3);
         });
 
         test('throws error when required variables are missing', async () => {
