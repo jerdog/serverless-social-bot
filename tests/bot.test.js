@@ -36,7 +36,7 @@ describe('Bot', () => {
         // Load sample tweets from assets
         try {
             const __dirname = path.dirname(fileURLToPath(import.meta.url));
-            const tweetsPath = path.join(__dirname, '../assets/source-tweets.txt');
+            const tweetsPath = path.join(__dirname, '../assets/tweets.txt');
             const tweetsContent = await fs.readFile(tweetsPath, 'utf-8');
             sampleTweets = tweetsContent.split('\n').filter(line => line.trim());
         } catch (error) {
@@ -73,7 +73,7 @@ describe('Bot', () => {
             const config = await loadConfig();
             expect(config).toBeTruthy();
             expect(config.markovStateSize).toBe(2); // default value
-            expect(config.markovMinChars).toBe(30); // default value
+            expect(config.markovMinChars).toBe(100); // default value
             expect(config.markovMaxChars).toBe(280); // default value
             expect(config.markovMaxTries).toBe(100); // default value
         });

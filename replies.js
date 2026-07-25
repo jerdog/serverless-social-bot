@@ -308,6 +308,30 @@ async function getOriginalPost(platform, postId) {
     return post.content;
 }
 
+// Track rate limit state for OpenAI (exponential backoff after a 429)
+const INITIAL_BACKOFF_MINUTES = 5;
+const rateLimitState = {
+    backoffMinutes: INITIAL_BACKOFF_MINUTES,
+    maxBackoffMinutes: 60,
+    resetTime: null
+};
+
+// Fallback responses used while rate limited
+const fallbackResponses = [
+    'Hmm, I need a moment to think about that one...',
+    'My circuits are a bit overloaded right now...',
+    'Give me a minute to process that...',
+    'Taking a quick break to cool my processors...',
+    'Sometimes even bots need a moment to reflect...',
+    'Processing... please stand by...'
+];
+
+// Get a random fallback response
+function getFallbackResponse() {
+    const index = Math.floor(Math.random() * fallbackResponses.length);
+    return fallbackResponses[index];
+}
+
 // Generate a reply using OpenAI
 async function generateReply(originalPost, replyContent) {
     try {
@@ -354,6 +378,14 @@ Generate a witty response that:
 
 Your response:`;
 
+        // If we're still inside a rate-limit backoff window, skip the API call.
+        if (rateLimitState.resetTime && Date.now() < rateLimitState.resetTime) {
+            debug('OpenAI rate-limited, using fallback response', 'warn', {
+                resetTime: new Date(rateLimitState.resetTime).toISOString()
+            });
+            return getFallbackResponse();
+        }
+
         // Get completion from OpenAI
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -372,6 +404,20 @@ Your response:`;
             })
         });
 
+        // On a rate-limit response, back off exponentially and return a fallback.
+        if (response.status === 429) {
+            rateLimitState.resetTime = Date.now() + rateLimitState.backoffMinutes * 60 * 1000;
+            debug('OpenAI rate limit hit, backing off', 'warn', {
+                backoffMinutes: rateLimitState.backoffMinutes,
+                resetTime: new Date(rateLimitState.resetTime).toISOString()
+            });
+            rateLimitState.backoffMinutes = Math.min(
+                rateLimitState.backoffMinutes * 2,
+                rateLimitState.maxBackoffMinutes
+            );
+            return getFallbackResponse();
+        }
+
         if (!response.ok) {
             debug('OpenAI API error:', 'error', {
                 status: response.status,
@@ -379,6 +425,10 @@ Your response:`;
             });
             return null;
         }
+
+        // Successful call — clear any backoff state.
+        rateLimitState.backoffMinutes = INITIAL_BACKOFF_MINUTES;
+        rateLimitState.resetTime = null;
 
         const data = await response.json();
         const reply = data.choices[0]?.message?.content?.trim();
@@ -400,30 +450,6 @@ Your response:`;
         debug('Error generating reply:', 'error', error);
         return null;
     }
-}
-
-// Track rate limit state for OpenAI
-const _rateLimitState = {
-    lastError: null,
-    backoffMinutes: 5,
-    maxBackoffMinutes: 60,
-    resetTime: null
-};
-
-// Fallback responses when rate limited
-const fallbackResponses = [
-    'Hmm, I need a moment to think about that one...',
-    'My circuits are a bit overloaded right now...',
-    'Give me a minute to process that...',
-    'Taking a quick break to cool my processors...',
-    'Sometimes even bots need a moment to reflect...',
-    'Processing... please stand by...'
-];
-
-// Get a random fallback response
-function _getFallbackResponse() {
-    const index = Math.floor(Math.random() * fallbackResponses.length);
-    return fallbackResponses[index];
 }
 
 // Handle a reply on Mastodon
