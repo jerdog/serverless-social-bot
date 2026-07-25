@@ -42,6 +42,18 @@ export function renderDashboard() {
     padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 13px;
   }
   .filters button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .models { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .models-label { color: var(--muted); font-size: 12px; }
+  .model-chip {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .model-chip.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .model-chip .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .model-chip .up { color: var(--up); }
+  .model-chip .down { color: var(--down); }
+  .model-chip .net { color: var(--muted); }
   main { max-width: 820px; margin: 0 auto; padding: 16px; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
@@ -85,6 +97,7 @@ export function renderDashboard() {
       <button data-filter="reply">Replies</button>
       <button data-filter="unrated">Unrated</button>
     </div>
+    <div class="models" id="models"></div>
   </div>
 </header>
 <main id="list"><div class="empty">Loading…</div></main>
@@ -92,8 +105,10 @@ export function renderDashboard() {
 (function () {
   var items = [];
   var filter = 'all';
+  var modelFilter = null;
   var listEl = document.getElementById('list');
   var statsEl = document.getElementById('stats');
+  var modelsEl = document.getElementById('models');
 
   function fmtTime(iso) {
     if (!iso) return '';
@@ -102,9 +117,69 @@ export function renderDashboard() {
   }
 
   function matches(item) {
+    if (modelFilter !== null && (item.model || 'unknown') !== modelFilter) return false;
     if (filter === 'all') return true;
     if (filter === 'unrated') return item.vote === 0;
     return item.type === filter;
+  }
+
+  function modelChip(value, label, stats) {
+    var chip = document.createElement('button');
+    chip.className = 'model-chip' + (modelFilter === value ? ' active' : '');
+    var name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = label;
+    chip.appendChild(name);
+    if (stats) {
+      var up = document.createElement('span');
+      up.className = 'up';
+      up.textContent = '▲' + stats.up;
+      var down = document.createElement('span');
+      down.className = 'down';
+      down.textContent = '▼' + stats.down;
+      var net = stats.up - stats.down;
+      var netEl = document.createElement('span');
+      netEl.className = 'net';
+      netEl.textContent = '(' + (net >= 0 ? '+' : '') + net + ')';
+      chip.appendChild(up);
+      chip.appendChild(down);
+      chip.appendChild(netEl);
+    }
+    chip.onclick = function () {
+      modelFilter = (modelFilter === value) ? null : value;
+      render();
+    };
+    return chip;
+  }
+
+  function renderModels() {
+    // Group votes by the model that produced each item — an at-a-glance A/B view.
+    var groups = {};
+    items.forEach(function (i) {
+      var m = i.model || 'unknown';
+      if (!groups[m]) groups[m] = { up: 0, down: 0, total: 0 };
+      groups[m].total++;
+      if (i.vote === 1) groups[m].up++;
+      else if (i.vote === -1) groups[m].down++;
+    });
+
+    var models = Object.keys(groups).sort();
+    modelsEl.textContent = '';
+    // Only worth showing once there is more than one model to compare.
+    if (models.length <= 1) {
+      modelsEl.style.display = 'none';
+      return;
+    }
+    modelsEl.style.display = 'flex';
+
+    var label = document.createElement('span');
+    label.className = 'models-label';
+    label.textContent = 'By model:';
+    modelsEl.appendChild(label);
+    modelsEl.appendChild(modelChip(null, 'all models', null));
+    models.forEach(function (m) {
+      modelsEl.appendChild(modelChip(m, m, groups[m]));
+    });
   }
 
   function renderStats() {
@@ -189,6 +264,7 @@ export function renderDashboard() {
 
   function render() {
     renderStats();
+    renderModels();
     var visible = items.filter(matches);
     listEl.textContent = '';
     if (!visible.length) {
