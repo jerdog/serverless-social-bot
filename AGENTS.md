@@ -23,7 +23,10 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 | `replies.js` | Reply handling: fetch original posts, generate replies via the Workers AI binding, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache and the reusable `LocalStorage` fallback. |
 | `feedback.js` | Records every generated post/reply into `POSTS_KV` under a `feedback:` prefix and stores per-item up/down votes for model tuning. |
 | `dashboard.js` | Returns the self-contained HTML feedback dashboard served at `/dashboard`. |
-| `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus). |
+| `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus), plus the reusable `LocalStorage` in-memory KV shim. |
+| `log.js` | Leaf logging module (`debug`, `LOG_LEVELS`); dependency-free so any module can import it without cycles. |
+| `social.js` | Thin Mastodon/Bluesky request helpers (`postMastodonStatus`, `getMastodonStatus`, `createBlueskyRecord`) — centralizes host + auth headers. |
+| `text.js` | Small composable text helpers (`stripHtml`, `stripMentions`, `normalizeWhitespace`). |
 | `assets/tweets.txt` | Local sample corpus used by tests. |
 | `tests/` | Jest tests (`bot.test.js`, `markov.test.js`) + `setup.js`. |
 | `scripts/release.sh` | Version-bump + push release helper (must run on `main`). |

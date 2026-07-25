@@ -4,6 +4,7 @@ import { debug } from './log.js';
 import { getSourceTweets } from './kv.js';
 import { storeRecentPost } from './replies.js';
 import { recordContent } from './feedback.js';
+import { postMastodonStatus, createBlueskyRecord } from './social.js';
 
 // Generate a unique id for content created in debug mode (no real post id).
 function debugId() {
@@ -539,17 +540,7 @@ async function postToMastodon(content) {
             return true;
         }
 
-        const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                status: content,
-                visibility: 'public'
-            })
-        });
+        const response = await postMastodonStatus({ status: content, visibility: 'public' });
 
         if (!response.ok) {
             const errorData = await response.text();
@@ -610,20 +601,9 @@ async function postToBluesky(content) {
             did: auth.did
         });
 
-        const response = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/com.atproto.repo.createRecord`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${auth.accessJwt}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                repo: auth.did,
-                collection: 'app.bsky.feed.post',
-                record: {
-                    text: content,
-                    createdAt: new Date().toISOString()
-                }
-            })
+        const response = await createBlueskyRecord(auth, {
+            text: content,
+            createdAt: new Date().toISOString()
         });
 
         if (!response.ok) {

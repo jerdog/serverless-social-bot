@@ -2,6 +2,8 @@ import { debug } from './log.js';
 import { getBlueskyAuth, debugId } from './bot.js';
 import { recordContent } from './feedback.js';
 import { LocalStorage } from './kv.js';
+import { postMastodonStatus, getMastodonStatus, createBlueskyRecord } from './social.js';
+import { stripHtml, stripMentions, normalizeWhitespace } from './text.js';
 
 // Default Workers AI text-generation model. Gemma 4 26B A4B is a Mixture-of-
 // Experts model (26B total params, ~4B active per pass), so it runs close to
@@ -105,18 +107,14 @@ async function fetchMastodonPost(url) {
             throw new Error('Invalid Mastodon post URL');
         }
 
-        const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses/${postId}`, {
-            headers: {
-                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
-            }
-        });
+        const response = await getMastodonStatus(postId);
 
         if (!response.ok) {
             throw new Error('Failed to fetch Mastodon post');
         }
 
         const post = await response.json();
-        return post.content.replace(/<[^>]+>/g, ''); // Strip HTML tags
+        return stripHtml(post.content);
     } catch (error) {
         debug('Error fetching Mastodon post:', 'error', error);
         return null;
@@ -330,11 +328,7 @@ async function generateReply(originalPost, replyContent) {
         });
 
         // Strip HTML, mentions, and extra whitespace from both sides of the thread.
-        const clean = (text) => text
-            .replace(/<[^>]*>/g, '')
-            .replace(/@[\w]+/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
+        const clean = (text) => normalizeWhitespace(stripMentions(stripHtml(text)));
         const cleanOriginal = clean(originalPost);
         const cleanReplyContent = clean(replyContent);
 
@@ -392,8 +386,7 @@ async function generateReply(originalPost, replyContent) {
         }
 
         // Clean up any remaining mentions or wrapping quotes.
-        const cleanReply = reply
-            .replace(/@[\w]+/g, '')
+        const cleanReply = stripMentions(reply)
             .replace(/^["']|["']$/g, '')
             .trim();
 
@@ -429,10 +422,7 @@ async function handleMastodonReply(notification) {
 
         // Clean the content
         const content = notification.status.content;
-        const cleanedContent = content
-            .replace(/<[^>]*>/g, '') // Remove HTML tags
-            .replace(/\s+/g, ' ') // Normalize whitespace
-            .trim();
+        const cleanedContent = normalizeWhitespace(stripHtml(content));
 
         debug('Cleaned content', 'info', {
             original: content,
@@ -449,11 +439,7 @@ async function handleMastodonReply(notification) {
         if (!originalPost) {
             debug('Original post not in cache, fetching from Mastodon...', 'info', { originalPostId });
             
-            const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses/${originalPostId}`, {
-                headers: {
-                    'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
-                }
-            });
+            const response = await getMastodonStatus(originalPostId);
 
             if (!response.ok) {
                 debug('Failed to fetch original post', 'error', {
@@ -500,17 +486,10 @@ async function handleMastodonReply(notification) {
 
         // Post the reply
         if (process.env.DEBUG_MODE !== 'true') {
-            const response = await fetch(`${process.env.MASTODON_API_URL}/api/v1/statuses`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    status: replyWithMention,
-                    in_reply_to_id: notification.status.id,  // Reply to the notification that mentioned us
-                    visibility: 'public'
-                })
+            const response = await postMastodonStatus({
+                status: replyWithMention,
+                in_reply_to_id: notification.status.id,  // Reply to the notification that mentioned us
+                visibility: 'public'
             });
 
             if (!response.ok) {
@@ -627,32 +606,20 @@ async function handleBlueskyReply(notification) {
             throw new Error('Failed to authenticate with Bluesky');
         }
 
-        // Create the post (use the configured PDS host, not a hardcoded one)
-        const blueskyApiUrl = process.env.BLUESKY_API_URL || 'https://bsky.social';
-        const response = await fetch(`${blueskyApiUrl}/xrpc/com.atproto.repo.createRecord`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${auth.accessJwt}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                repo: auth.did,
-                collection: 'app.bsky.feed.post',
-                record: {
-                    text: generatedReply,
-                    reply: {
-                        root: {
-                            uri: notification.reasonSubject,
-                            cid: notification.record.reply?.root?.cid
-                        },
-                        parent: {
-                            uri: notification.uri,
-                            cid: notification.cid
-                        }
-                    },
-                    createdAt: new Date().toISOString()
+        // Create the post (host resolution handled by the shared helper)
+        const response = await createBlueskyRecord(auth, {
+            text: generatedReply,
+            reply: {
+                root: {
+                    uri: notification.reasonSubject,
+                    cid: notification.record.reply?.root?.cid
+                },
+                parent: {
+                    uri: notification.uri,
+                    cid: notification.cid
                 }
-            })
+            },
+            createdAt: new Date().toISOString()
         });
 
         if (!response.ok) {
