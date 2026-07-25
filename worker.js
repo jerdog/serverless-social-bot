@@ -1,5 +1,6 @@
 // Import only the necessary functions
-import { main, debug, getBlueskyAuth } from './bot.js';
+import { debug } from './log.js';
+import { main, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
 import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI, loadRecentPostsFromKV } from './replies.js';
 import { initFeedback, recordVote, listFeedback, summarizeFeedback } from './feedback.js';
@@ -13,11 +14,7 @@ if (typeof process === 'undefined' || typeof process.env === 'undefined') {
 // Helper function to setup environment variables
 async function setupEnvironment(env) {
     try {
-        debug('Setting up environment with:', 'info', { 
-            hasPostsKV: !!env.POSTS_KV,
-            envKeys: Object.keys(env),
-            kvBindings: Object.keys(env).filter(key => key.endsWith('_KV'))
-        });
+        debug('Setting up environment', 'info', { hasPostsKV: !!env.POSTS_KV, hasAI: !!env.AI });
 
         process.env = {
             ...process.env,
@@ -48,35 +45,16 @@ async function setupEnvironment(env) {
         
         // Initialize KV namespace
         if (env.POSTS_KV) {
-            debug('Found POSTS_KV binding, attempting to initialize', 'info', {
-                type: typeof env.POSTS_KV,
-                methods: Object.keys(env.POSTS_KV)
-            });
-
-            // Initialize KV first
             await initializeKV(env.POSTS_KV);
             initFeedback(env.POSTS_KV);
-            debug('KV initialization complete');
-
-            // Then load existing posts
-            debug('Loading posts from KV...');
             await loadRecentPostsFromKV();
-            debug('Posts loaded successfully');
+            debug('KV initialized and posts loaded', 'info');
         } else {
             initFeedback(null);
-            debug('No POSTS_KV found in env', 'warn', {
-                availableBindings: Object.keys(env).filter(key => key.includes('KV')),
-                envType: typeof env,
-                envIsNull: env === null,
-                envIsUndefined: env === undefined
-            });
+            debug('No POSTS_KV found in env; using local storage', 'warn');
         }
 
-        debug('Environment setup complete', 'info', {
-            env: Object.fromEntries(
-                Object.entries(process.env).filter(([key]) => !key.includes('TOKEN') && !key.includes('PASSWORD'))
-            )
-        });
+        debug('Environment setup complete', 'info');
     } catch (error) {
         debug('Error during environment setup:', 'error', {
             error: error.message,
@@ -87,7 +65,7 @@ async function setupEnvironment(env) {
 }
 
 // Check for notifications on both platforms
-async function checkNotifications(_env) {
+async function checkNotifications() {
     try {
         debug('Checking for notifications...');
         debug('Fetching Mastodon notifications...', 'info');
@@ -113,10 +91,7 @@ async function checkNotifications(_env) {
         }
 
         const mastodonNotifications = await mastodonResponse.json();
-        debug('Retrieved Mastodon notifications', 'info', {
-            totalCount: mastodonNotifications.length,
-            firstNotification: mastodonNotifications[0]
-        });
+        debug('Retrieved Mastodon notifications', 'info', { totalCount: mastodonNotifications.length });
 
         // Process each Mastodon notification
         for (const notification of mastodonNotifications) {
@@ -161,10 +136,7 @@ async function checkNotifications(_env) {
             const blueskyData = await notificationsResponse.json();
             const notifications = blueskyData.notifications || [];
 
-            debug('Retrieved Bluesky notifications', 'info', {
-                totalCount: notifications.length,
-                firstNotification: notifications[0]
-            });
+            debug('Retrieved Bluesky notifications', 'info', { totalCount: notifications.length });
 
             // Process each Bluesky notification
             for (const notification of notifications) {
@@ -342,7 +314,7 @@ export default {
             if (url.pathname === '/check-replies') {
                 if (request.method === 'POST') {
                     debug('Checking for replies...');
-                    await checkNotifications(env);
+                    await checkNotifications();
                     return new Response('Notifications checked', { status: 200 });
                 }
                 return new Response('Method not allowed', { status: 405 });
@@ -367,7 +339,7 @@ export default {
             debug('Main execution completed');
 
             // Check for and handle replies
-            await ctx.waitUntil(checkNotifications(env));
+            await ctx.waitUntil(checkNotifications());
             debug('Notification check completed');
             
             debug('Scheduled execution completed');

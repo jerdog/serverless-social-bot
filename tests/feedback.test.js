@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, beforeEach } from '@jest/globals';
 import { initFeedback, recordContent, recordVote, listFeedback, summarizeFeedback } from '../feedback.js';
-import { LocalStorage } from '../replies.js';
+import { LocalStorage } from '../kv.js';
 
 describe('feedback', () => {
     let kv;

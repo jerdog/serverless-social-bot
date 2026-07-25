@@ -2,14 +2,43 @@
 const SOURCE_TWEETS_KEY = 'source_tweets';
 const BATCH_SIZE = 128; // KV has a limit on value size, so we'll split data into batches
 
-export async function storeSourceTweets(env, tweets, append = false) {
+// In-memory KV shim used as a fallback for local development and tests. Exposes
+// the subset of the Cloudflare KV API this project relies on.
+export class LocalStorage {
+    constructor() {
+        this.store = new Map();
+    }
+
+    async put(key, value) {
+        this.store.set(key, value);
+        return Promise.resolve();
+    }
+
+    async get(key) {
+        return Promise.resolve(this.store.get(key));
+    }
+
+    async delete(key) {
+        this.store.delete(key);
+        return Promise.resolve();
+    }
+
+    async list({ prefix }) {
+        const keys = Array.from(this.store.keys())
+            .filter(key => key.startsWith(prefix))
+            .map(name => ({ name }));
+        return Promise.resolve({ keys });
+    }
+}
+
+async function storeSourceTweets(env, tweets, append = false) {
     try {
         let existingTweets = [];
         if (append) {
             existingTweets = await getSourceTweets(env);
-            console.log('Appending to existing tweets:', 'info', { 
+            console.log('Appending to existing tweets:', {
                 existingCount: existingTweets.length,
-                newCount: tweets.length 
+                newCount: tweets.length
             });
         }
 

@@ -3,8 +3,8 @@
 //
 // Records persist in POSTS_KV under a `feedback:` prefix, independent of the
 // short-lived `post:` cache in replies.js, so labels survive for training.
-import { debug } from './bot.js';
-import { LocalStorage } from './replies.js';
+import { debug } from './log.js';
+import { LocalStorage } from './kv.js';
 
 const FEEDBACK_PREFIX = 'feedback:';
 const VALID_TYPES = ['post', 'reply'];
@@ -98,11 +98,12 @@ async function listFeedback({ type = null } = {}) {
 
     try {
         const { keys } = await feedbackKV.list({ prefix: FEEDBACK_PREFIX });
+        const raws = await Promise.all(keys.map(key => feedbackKV.get(key.name)));
+
         const records = [];
-        for (const key of keys) {
-            const raw = await feedbackKV.get(key.name);
+        raws.forEach((raw, i) => {
             if (!raw) {
-                continue;
+                return;
             }
             try {
                 const record = JSON.parse(raw);
@@ -110,9 +111,9 @@ async function listFeedback({ type = null } = {}) {
                     records.push(record);
                 }
             } catch (parseError) {
-                debug('Skipping unparseable feedback record', 'warn', { key: key.name });
+                debug('Skipping unparseable feedback record', 'warn', { key: keys[i].name });
             }
-        }
+        });
         records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         return records;
     } catch (error) {

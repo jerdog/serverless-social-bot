@@ -1,5 +1,7 @@
-import { debug, getBlueskyAuth, debugId } from './bot.js';
+import { debug } from './log.js';
+import { getBlueskyAuth, debugId } from './bot.js';
 import { recordContent } from './feedback.js';
+import { LocalStorage } from './kv.js';
 
 // Default Workers AI text-generation model. Gemma 4 26B A4B is a Mixture-of-
 // Experts model (26B total params, ~4B active per pass), so it runs close to
@@ -20,34 +22,6 @@ function getReplyModel() {
 
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
-
-// Local storage for development
-class LocalStorage {
-    constructor() {
-        this.store = new Map();
-    }
-
-    async put(key, value) {
-        this.store.set(key, value);
-        return Promise.resolve();
-    }
-
-    async get(key) {
-        return Promise.resolve(this.store.get(key));
-    }
-
-    async delete(key) {
-        this.store.delete(key);
-        return Promise.resolve();
-    }
-
-    async list({ prefix }) {
-        const keys = Array.from(this.store.keys())
-            .filter(key => key.startsWith(prefix))
-            .map(name => ({ name }));
-        return Promise.resolve({ keys });
-    }
-}
 
 // KV namespace for storing posts
 let _postsKV = null;
@@ -81,29 +55,20 @@ async function loadRecentPostsFromKV() {
         debug('Loading posts from storage...', 'info');
 
         const { keys } = await kv.list({ prefix: 'post:' });
-        debug('Found posts in storage', 'info', { count: keys.length });
+        const posts = await Promise.all(keys.map(key => kv.get(key.name)));
 
         // Clear existing cache before loading
         recentPosts.clear();
 
-        for (const key of keys) {
-            const post = await kv.get(key.name);
+        keys.forEach((key, i) => {
+            const post = posts[i];
             if (post) {
                 const [platform, postId] = key.name.replace('post:', '').split(':');
-                const parsedPost = JSON.parse(post);
-                recentPosts.set(`${platform}:${postId}`, parsedPost);
-                debug('Loaded post', 'info', { 
-                    platform,
-                    postId,
-                    content: parsedPost.content.substring(0, 50) + '...'
-                });
+                recentPosts.set(`${platform}:${postId}`, JSON.parse(post));
             }
-        }
-        
-        debug('Loaded all posts from storage', 'info', {
-            count: recentPosts.size,
-            keys: Array.from(recentPosts.keys())
         });
+
+        debug('Loaded posts from storage', 'info', { count: recentPosts.size });
     } catch (error) {
         debug('Error loading posts from storage:', 'error', error);
         throw error;
@@ -270,14 +235,7 @@ async function storeRecentPost(platform, postId, content) {
 // Get the original post content
 async function getOriginalPost(platform, postId) {
     const key = `${platform}:${postId}`;
-    debug('Getting original post', 'info', {
-        platform,
-        postId,
-        key,
-        exists: recentPosts.has(key),
-        cacheSize: recentPosts.size,
-        cacheKeys: Array.from(recentPosts.keys())
-    });
+    debug('Getting original post', 'info', { key, exists: recentPosts.has(key) });
 
     // First check memory cache
     let post = recentPosts.get(key);
@@ -732,8 +690,6 @@ export {
     fetchPostContent,
     loadRecentPostsFromKV,
     storeRecentPost,
-    getOriginalPost,
     initializeKV,
-    initAI,
-    LocalStorage
+    initAI
 };

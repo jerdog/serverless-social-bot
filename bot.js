@@ -1,5 +1,6 @@
 // Essential imports only
 import fetch from 'node-fetch';
+import { debug } from './log.js';
 import { getSourceTweets } from './kv.js';
 import { storeRecentPost } from './replies.js';
 import { recordContent } from './feedback.js';
@@ -10,38 +11,41 @@ function debugId() {
 }
 
 // HTML processing functions
+// Static entity map, defined once at module scope (cleanText runs it over every
+// fetched post and source tweet).
+const HTML_ENTITIES = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&nbsp;': ' ',
+    '&ndash;': '-',
+    '&mdash;': '--',
+    '&hellip;': '...',
+    '&trade;': 'TM',
+    '&copy;': '(c)',
+    '&reg;': '(R)',
+    '&deg;': 'degrees',
+    '&plusmn;': '+/-',
+    '&para;': '(P)',
+    '&sect;': '(S)',
+    '&ldquo;': '"',
+    '&rdquo;': '"',
+    '&lsquo;': "'",
+    '&rsquo;': "'",
+    '&laquo;': '<<',
+    '&raquo;': '>>',
+    '&times;': 'x',
+    '&divide;': '/',
+    '&cent;': 'c',
+    '&pound;': 'GBP',
+    '&euro;': 'EUR',
+    '&bull;': '*'
+};
+
 function decodeHtmlEntities(text) {
-    const entities = {
-        '&amp;': '&',
-        '&lt;': '<',
-        '&gt;': '>',
-        '&quot;': '"',
-        '&#39;': "'",
-        '&nbsp;': ' ',
-        '&ndash;': '-',
-        '&mdash;': '--',
-        '&hellip;': '...',
-        '&trade;': 'TM',
-        '&copy;': '(c)',
-        '&reg;': '(R)',
-        '&deg;': 'degrees',
-        '&plusmn;': '+/-',
-        '&para;': '(P)',
-        '&sect;': '(S)',
-        '&ldquo;': '"',
-        '&rdquo;': '"',
-        '&lsquo;': "'",
-        '&rsquo;': "'",
-        '&laquo;': '<<',
-        '&raquo;': '>>',
-        '&times;': 'x',
-        '&divide;': '/',
-        '&cent;': 'c',
-        '&pound;': 'GBP',
-        '&euro;': 'EUR',
-        '&bull;': '*'
-    };
-    return text.replace(/&[^;]+;/g, entity => entities[entity] || '');
+    return text.replace(/&[^;]+;/g, entity => HTML_ENTITIES[entity] || '');
 }
 
 function stripHtmlTags(text) {
@@ -55,28 +59,6 @@ function stripHtmlTags(text) {
     
     // Clean up excessive whitespace
     return text.replace(/\s+/g, ' ').trim();
-}
-
-// Utility Functions
-// Log-level priorities (lower number = more severe). 'essential' and 'error'
-// rank at/below the minimum DEBUG_LEVEL threshold, so they always surface.
-const LOG_LEVELS = { essential: -1, error: 0, warn: 1, info: 2, verbose: 3 };
-
-function debug(message, level = 'info', data = null) {
-    // Gate on DEBUG_LEVEL before doing any formatting work.
-    const threshold = LOG_LEVELS[process.env.DEBUG_LEVEL] ?? LOG_LEVELS.info;
-    const priority = LOG_LEVELS[level] ?? LOG_LEVELS.info;
-    if (priority > threshold) {
-        return;
-    }
-
-    const logMessage = `[${new Date().toISOString()}] ${message}`;
-    const logFn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
-    if (data !== null && data !== undefined) {
-        logFn(logMessage, data);
-    } else {
-        logFn(logMessage);
-    }
 }
 
 // Configuration loader
@@ -276,15 +258,9 @@ class MarkovChain {
         let currentState = startState;
         let result = startState;
         let usedStates = new Set([startState]);
-        let shouldContinue = true;
+        let possibleNextWords = this.chain.get(currentState);
 
-        while (shouldContinue) {
-            const possibleNextWords = this.chain.get(currentState);
-            if (!possibleNextWords || possibleNextWords.length === 0) {
-                shouldContinue = false;
-                continue;
-            }
-
+        while (possibleNextWords && possibleNextWords.length > 0) {
             // Shuffle possible next words to increase variation
             const shuffledWords = [...possibleNextWords].sort(() => Math.random() - 0.5);
             let foundNew = false;
@@ -301,6 +277,7 @@ class MarkovChain {
             }
 
             if (!foundNew) break;
+            possibleNextWords = this.chain.get(currentState);
         }
 
         return result;
@@ -349,7 +326,6 @@ async function fetchTextContent(env) {
         fetchSourceTweets(env)
     ]);
 
-    // debug(`Fetched ${posts.length} posts from social media`, 'info');
     debug(`Fetched ${sourceTweets.length} tweets from source file`, 'info');
 
     return [...posts, ...sourceTweets];
@@ -381,14 +357,9 @@ async function fetchRecentPosts() {
             const mastodonData = await mastodonResponse.json();
             
             if (Array.isArray(mastodonData)) {
-                // debug(`Retrieved ${mastodonData.length} posts from Mastodon`, 'verbose');
                 const mastodonPosts = mastodonData
                     .filter(post => post && post.content)
-                    .map(post => {
-                        const cleanedText = cleanText(post.content);
-                        // debug(`Mastodon post: ${cleanedText}`, 'verbose');
-                        return cleanedText;
-                    })
+                    .map(post => cleanText(post.content))
                     .filter(text => text.length > 0);
                 debug(`Processed ${mastodonPosts.length} valid Mastodon posts`, 'verbose');
                 posts.push(...mastodonPosts);
@@ -416,14 +387,9 @@ async function fetchRecentPosts() {
                 const blueskyData = await blueskyResponse.json();
                 
                 if (blueskyData && blueskyData.feed && Array.isArray(blueskyData.feed)) {
-                    // debug(`Retrieved ${blueskyData.feed.length} posts from Bluesky`, 'verbose');
                     const blueskyPosts = blueskyData.feed
                         .filter(item => item && item.post && item.post.record && item.post.record.text)
-                        .map(item => {
-                            const cleanedText = cleanText(item.post.record.text);
-                            // debug(`Bluesky post: ${cleanedText}`, 'verbose');
-                            return cleanedText;
-                        })
+                        .map(item => cleanText(item.post.record.text))
                         .filter(text => text.length > 0);
                     debug(`Processed ${blueskyPosts.length} valid Bluesky posts`, 'verbose');
                     posts.push(...blueskyPosts);
@@ -713,8 +679,8 @@ async function postToSocialMedia(content) {
 // Main Execution
 async function main(env) {
     try {
-        // Load configuration
-        CONFIG = await loadConfig();
+        // Load configuration (loadConfig sets the module-level CONFIG).
+        await loadConfig();
         // Log only non-sensitive config (never tokens/passwords).
         debug('Configuration loaded', 'info', {
             markovConfig: {
@@ -757,4 +723,4 @@ async function main(env) {
 }
 
 // Export for worker
-export { debug, main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth, debugId };
+export { main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth, debugId };
