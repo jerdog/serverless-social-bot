@@ -214,6 +214,26 @@ the raw labels any time via `GET /api/feedback`.
 > Note: like the other endpoints, the dashboard is currently unauthenticated —
 > put it behind Cloudflare Access (or add a token check) before exposing it publicly.
 
+## Updating dependencies
+
+The Linux Cloudflare build and CI run `npm ci`, which requires a **complete**
+`package-lock.json`. A local `npm install` on **macOS** can prune the Linux-only
+`@img/sharp-wasm32` → `@emnapi/*` subtree (a transitive of wrangler's `sharp`
+dependency). Cloudflare's build image falls back to that wasm variant, so if a
+pruned lock is committed the build fails with `Missing: @emnapi/... from lock file`.
+
+When changing dependencies, keep the lockfile complete by either:
+
+- **Regenerating the lockfile on Linux** (CI, a container, or `docker run --rm -v "$PWD":/w -w /w node:22 npm install`), or
+- Setting **`NPM_CONFIG_OMIT=optional`** as a build environment variable in the
+  Cloudflare Workers **Build** settings. The build never runs the test suite, so
+  omitting optional native packages there is safe and makes `npm ci` immune to lock
+  pruning. **Do not** put `omit=optional` in `.npmrc` — it breaks `npm test`, because
+  jest's file resolver uses an optional native binding.
+
+CI (`npm ci` in GitHub Actions) is the guardrail: if a pruned lock is pushed, CI
+goes red before the deploy build does.
+
 ## Deployment
 
 1. Configure your environment variables in Cloudflare:
