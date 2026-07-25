@@ -25,4 +25,4 @@ DEBUG_LEVEL=verbose  # or "info"
 
 # Cloudflare Configuration
 CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id_here
-CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here  # Ensure this token has the necessary permissions for Workers and KV
+CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here  # Needs Workers Scripts + Workers KV + Workers AI permissions. Read by scripts/dev.sh and scripts/deploy.sh (default profile).

@@ -76,13 +76,23 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 ## Commands
 
 ```bash
-npm install          # install deps
-npm test             # run Jest tests (required before release)
-npm run lint         # eslint .
-npm run lint:fix     # eslint . --fix
-npm run dev          # wrangler dev worker.js  (local Worker)
-npm run deploy       # wrangler deploy worker.js
+npm install            # install deps
+npm test               # run Jest tests (required before release)
+npm run lint           # eslint .
+npm run lint:fix       # eslint . --fix
+npm run dev            # scripts/dev.sh: loads CF creds, then wrangler dev
+npm run dev:raw        # plain wrangler dev (uses your OAuth login)
+npm run deploy         # wrangler deploy worker.js (OAuth login / active account)
+npm run deploy:account # scripts/deploy.sh [profile]: deploy to a specific account
 ```
+
+`scripts/dev.sh` and `scripts/deploy.sh` share `scripts/lib/cloudflare-env.sh`,
+which resolves `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (shell env →
+`.cloudflare/<profile>.env` → `.dev.vars`) and exports them so wrangler
+authenticates to a specific account without an interactive login. This matters
+because the Worker's Workers AI binding requires account auth even under
+`wrangler dev`, and wrangler reads these from the environment — **not** from
+`.dev.vars` (which only feeds the Worker's runtime bindings).
 
 Tests use `NODE_OPTIONS=--experimental-vm-modules` (set by the npm script) because
 of ESM + Jest. Run individual tests with, e.g.,

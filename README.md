@@ -159,12 +159,22 @@ Debug mode: Would reply to Mastodon post: [reply content]
    DEBUG_LEVEL=verbose
    ```
    Reply generation uses the Workers AI `AI` binding (configured in
-   `wrangler.toml`), so no API key belongs in `.dev.vars`.
+   `wrangler.toml`), so no OpenAI-style key belongs in `.dev.vars`.
 
 3. Start the development server:
    ```bash
-   wrangler dev
+   npm run dev
    ```
+   Because the Worker uses a Workers AI binding, `wrangler dev` must
+   authenticate to your Cloudflare account. **`wrangler` reads its credentials
+   from the environment, not from `.dev.vars`** (that file only feeds the
+   Worker's own runtime bindings), so plain `wrangler dev` will prompt for an
+   interactive OAuth login. `npm run dev` runs `scripts/dev.sh`, which loads
+   `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (from your shell,
+   `.cloudflare/<profile>.env`, or `.dev.vars`) and exports them first, so it
+   starts without the login prompt. For another account:
+   `npm run dev -- personal` (or `./scripts/dev.sh personal`). To bypass the
+   loader and use your OAuth login, `npm run dev:raw`.
 
 ## API Endpoints
 

@@ -39,7 +39,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "dev": "wrangler dev worker.js",
+    "dev": "bash scripts/dev.sh",
+    "dev:raw": "wrangler dev worker.js",
     "deploy": "wrangler deploy worker.js",
     "deploy:account": "bash scripts/deploy.sh",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
