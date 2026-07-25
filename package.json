@@ -68,32 +68,6 @@
       "<rootDir>/tests/setup.js"
     ]
   },
-  "eslintConfig": {
-    "env": {
-      "node": true,
-      "es2022": true,
-      "jest": true
-    },
-    "extends": [
-      "eslint:recommended"
-    ],
-    "parserOptions": {
-      "ecmaVersion": 2022,
-      "sourceType": "module"
-    },
-    "rules": {
-      "quotes": [
-        "error",
-        "single"
-      ],
-      "no-constant-condition": [
-        "error",
-        {
-          "checkLoops": false
-        }
-      ]
-    }
-  },
   "dependencies": {
     "dotenv": "^17.4.2",
     "node-fetch": "^3.3.2"
@@ -101,9 +75,11 @@
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@babel/preset-env": "^7.29.7",
+    "@eslint/js": "^9.39.5",
     "@jest/globals": "^30.4.1",
     "babel-jest": "^30.4.1",
-    "eslint": "^8.57.1",
+    "eslint": "^9.39.5",
+    "globals": "^17.7.0",
     "jest": "^30.4.2",
     "wrangler": "^4.114.0"
   },

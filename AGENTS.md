@@ -90,10 +90,10 @@ of ESM + Jest. Run individual tests with, e.g.,
 
 ## Conventions
 
-- **ESLint is authoritative.** Note the two configs differ: `.eslintrc.yml` (used by
-  `npm run lint`) enforces **4-space indentation**, **single quotes**, and
-  **semicolons**, and ignores unused vars/args prefixed with `_`. Match the
-  surrounding style; run `npm run lint` before committing.
+- **ESLint is authoritative.** Config is `eslint.config.js` (ESLint 9 flat config):
+  **4-space indentation**, **single quotes**, **semicolons**, unix linebreaks, and
+  it ignores unused vars/args prefixed with `_`. Match the surrounding style; run
+  `npm run lint` before committing.
 - Prefix intentionally-unused variables/params with `_` (e.g. `_env`, `_rateLimitState`).
 - Use the `debug(message, level, data)` helper for logging rather than raw
   `console.*`. Levels seen in code: `info`, `warn`, `error`, `verbose`, `essential`.
