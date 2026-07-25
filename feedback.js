@@ -3,6 +3,10 @@
 //
 // Records persist in POSTS_KV under a `feedback:` prefix, independent of the
 // short-lived `post:` cache in replies.js, so labels survive for training.
+//
+// Posts are deduplicated by content: the same generated text sent to both
+// Mastodon and Bluesky is one logical post (stored once, with a `platforms`
+// list). Replies are unique per platform+id (each is a distinct response).
 import { debug } from './log.js';
 import { LocalStorage } from './kv.js';
 
@@ -12,8 +16,8 @@ const VALID_VOTES = [-1, 0, 1];
 
 let feedbackKV = null;
 
-// Initialize the feedback store. Falls back to in-memory storage (shared with
-// replies.js's LocalStorage implementation) when no KV namespace is provided.
+// Initialize the feedback store. Falls back to in-memory storage when no KV
+// namespace is provided (local dev / tests).
 function initFeedback(namespace) {
     feedbackKV = namespace || new LocalStorage();
     if (!namespace) {
@@ -21,33 +25,76 @@ function initFeedback(namespace) {
     }
 }
 
-function feedbackKey(type, platform, id) {
-    return `${FEEDBACK_PREFIX}${type}:${platform}:${id}`;
+// Stable, dependency-free content hash (djb2) used to dedupe posts by content.
+function hashContent(content) {
+    let hash = 5381;
+    for (let i = 0; i < content.length; i++) {
+        hash = (((hash << 5) + hash) + content.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
 }
 
-// Record a generated item so it can be rated. Idempotent: re-recording the same
-// id preserves any existing vote rather than resetting it.
+// Key scheme: posts by content hash (deduped across platforms); replies per
+// platform+id. For posts, `id` IS the content hash (also stored on the record),
+// so the dashboard can vote by that id without knowing the content.
+function postKey(hash) {
+    return `${FEEDBACK_PREFIX}post:${hash}`;
+}
+function replyKey(platform, id) {
+    return `${FEEDBACK_PREFIX}reply:${platform}:${id}`;
+}
+
+// List all feedback keys, following KV pagination so nothing is dropped.
+async function listAllKeys() {
+    const keys = [];
+    let cursor;
+    let complete = false;
+    while (!complete) {
+        const res = await feedbackKV.list({ prefix: FEEDBACK_PREFIX, cursor });
+        keys.push(...res.keys);
+        // LocalStorage returns no list_complete (=> undefined => treat as done).
+        complete = res.list_complete !== false;
+        cursor = res.cursor;
+    }
+    return keys;
+}
+
+// Record a generated item so it can be rated. Posts dedupe by content, merging
+// the platform into an existing record; existing votes are preserved.
 async function recordContent({ type, platform, id, content, context = null, model = null }) {
     if (!feedbackKV) {
         debug('Feedback storage not initialized, skipping record', 'warn');
         return null;
     }
-    if (!VALID_TYPES.includes(type) || !platform || !id || !content) {
+    if (!VALID_TYPES.includes(type) || !platform || !content || (type === 'reply' && !id)) {
         debug('Invalid feedback content, skipping', 'warn', { type, platform, hasId: !!id });
         return null;
     }
 
-    const key = feedbackKey(type, platform, id);
+    const recordId = type === 'post' ? hashContent(content) : String(id);
+    const key = type === 'post' ? postKey(recordId) : replyKey(platform, recordId);
+
     try {
         const existing = await feedbackKV.get(key);
         if (existing) {
-            return JSON.parse(existing);
+            // Merge this platform into the record (back-compat: old records had a
+            // singular `platform`). Preserve the vote; only write if it changed.
+            const record = JSON.parse(existing);
+            const platforms = record.platforms || (record.platform ? [record.platform] : []);
+            if (!platforms.includes(platform)) {
+                platforms.push(platform);
+                record.platforms = platforms;
+                delete record.platform;
+                await feedbackKV.put(key, JSON.stringify(record));
+                debug('Merged platform into feedback record', 'info', { key, platform });
+            }
+            return record;
         }
 
         const record = {
-            id: String(id),
-            platform,
+            id: recordId,
             type,
+            platforms: [platform],
             content,
             context,
             model,
@@ -63,20 +110,21 @@ async function recordContent({ type, platform, id, content, context = null, mode
     }
 }
 
-// Set the vote (-1 down, 0 none, 1 up) on a recorded item. Returns the updated
-// record, or null if the item does not exist.
+// Set the vote (-1 down, 0 none, 1 up) on a recorded item. For posts, `id` is the
+// content hash; for replies, `platform`+`id` identify it. Returns the updated
+// record, or null if it does not exist.
 async function recordVote({ type, platform, id, vote }) {
     if (!feedbackKV) {
         throw new Error('Feedback storage not initialized');
     }
-    if (!VALID_TYPES.includes(type) || !platform || !id) {
+    if (!VALID_TYPES.includes(type) || !id || (type === 'reply' && !platform)) {
         throw new Error('Invalid vote target');
     }
     if (!VALID_VOTES.includes(vote)) {
         throw new Error('Vote must be -1, 0, or 1');
     }
 
-    const key = feedbackKey(type, platform, id);
+    const key = type === 'post' ? postKey(id) : replyKey(platform, id);
     const existing = await feedbackKV.get(key);
     if (!existing) {
         return null;
@@ -97,7 +145,7 @@ async function listFeedback({ type = null } = {}) {
     }
 
     try {
-        const { keys } = await feedbackKV.list({ prefix: FEEDBACK_PREFIX });
+        const keys = await listAllKeys();
         const raws = await Promise.all(keys.map(key => feedbackKV.get(key.name)));
 
         const records = [];
@@ -122,6 +170,22 @@ async function listFeedback({ type = null } = {}) {
     }
 }
 
+// Delete every feedback record. Returns the number removed.
+async function clearFeedback() {
+    if (!feedbackKV) {
+        return 0;
+    }
+    try {
+        const keys = await listAllKeys();
+        await Promise.all(keys.map(key => feedbackKV.delete(key.name)));
+        debug('Cleared feedback records', 'info', { removed: keys.length });
+        return keys.length;
+    } catch (error) {
+        debug('Error clearing feedback:', 'error', error);
+        return 0;
+    }
+}
+
 // Summary tallies for the dashboard header.
 function summarizeFeedback(records) {
     return records.reduce((acc, r) => {
@@ -133,4 +197,4 @@ function summarizeFeedback(records) {
     }, { total: 0, up: 0, down: 0, unrated: 0 });
 }
 
-export { initFeedback, recordContent, recordVote, listFeedback, summarizeFeedback };
+export { initFeedback, recordContent, recordVote, listFeedback, clearFeedback, summarizeFeedback };

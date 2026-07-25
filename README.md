@@ -186,7 +186,8 @@ Debug mode: Would reply to Mastodon post: [reply content]
 - `POST /check-replies` - Check for and process new replies
 - `GET /dashboard` - Feedback dashboard for upvoting/downvoting generated content
 - `GET /api/feedback` - JSON list of recorded posts/replies with votes (optional `?type=post|reply`)
-- `POST /api/vote` - Record a vote: `{ "type", "platform", "id", "vote" }` where `vote` is `1`, `0`, or `-1`
+- `POST /api/vote` - Record a vote: `{ "type", "id", "vote" }` (`vote` is `1`, `0`, or `-1`; replies also need `"platform"`)
+- `POST /api/feedback/clear` - Delete all feedback records (wipe test/junk data)
 
 ## Feedback Dashboard
 
@@ -202,10 +203,13 @@ a labeled dataset you can use to tune the model over time:
   stored as context.
 
 Each item stores a single vote label (`1` up, `0` none, `-1` down); clicking an
-active button again clears it. Every item is also tagged with the model that
-produced it (`markov` for posts, the Workers AI model id for replies) and shown as
-a badge, so your votes stay comparable across model swaps. Export the raw labels
-any time via `GET /api/feedback`.
+active button again clears it. **Posts are deduplicated by content** — the same
+generated text sent to both Mastodon and Bluesky shows as **one card** with both
+platform badges (replies stay per-platform). Every item is also tagged with the
+model that produced it (`markov` for posts, the Workers AI model id for replies)
+and shown as a badge, so your votes stay comparable across model swaps. The header
+has **Refresh** (reload latest) and **Clear all** (wipe records) buttons. Export
+the raw labels any time via `GET /api/feedback`.
 
 > Note: like the other endpoints, the dashboard is currently unauthenticated —
 > put it behind Cloudflare Access (or add a token check) before exposing it publicly.

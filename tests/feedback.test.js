@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach } from '@jest/globals';
-import { initFeedback, recordContent, recordVote, listFeedback, summarizeFeedback } from '../feedback.js';
+import { initFeedback, recordContent, recordVote, listFeedback, clearFeedback, summarizeFeedback } from '../feedback.js';
 import { LocalStorage } from '../kv.js';
 
 describe('feedback', () => {
@@ -15,12 +15,24 @@ describe('feedback', () => {
         initFeedback(kv);
     });
 
-    test('recordContent creates a record with a neutral vote', async () => {
+    test('recordContent creates a post record with a neutral vote and platforms list', async () => {
         const rec = await recordContent({ type: 'post', platform: 'bluesky', id: 'abc', content: 'hello world' });
         expect(rec).toBeTruthy();
         expect(rec.vote).toBe(0);
         expect(rec.type).toBe('post');
         expect(rec.content).toBe('hello world');
+        expect(rec.platforms).toEqual(['bluesky']);
+    });
+
+    test('posts are deduped by content across platforms', async () => {
+        const a = await recordContent({ type: 'post', platform: 'mastodon', id: 'm1', content: 'same text', model: 'markov' });
+        const b = await recordContent({ type: 'post', platform: 'bluesky', id: 'b1', content: 'same text', model: 'markov' });
+        expect(b.id).toBe(a.id);                       // same content hash
+        expect(b.platforms).toEqual(['mastodon', 'bluesky']);
+
+        const posts = await listFeedback({ type: 'post' });
+        expect(posts).toHaveLength(1);                 // one card, not two
+        expect(posts[0].platforms).toEqual(['mastodon', 'bluesky']);
     });
 
     test('recordContent stores the model label', async () => {
@@ -37,6 +49,7 @@ describe('feedback', () => {
         expect(await recordContent({ type: 'bogus', platform: 'x', id: '1', content: 'y' })).toBeNull();
         expect(await recordContent({ type: 'post', platform: '', id: '1', content: 'y' })).toBeNull();
         expect(await recordContent({ type: 'post', platform: 'x', id: '1', content: '' })).toBeNull();
+        expect(await recordContent({ type: 'reply', platform: 'x', content: 'y' })).toBeNull(); // reply needs id
     });
 
     test('recordContent is idempotent and preserves an existing vote', async () => {
@@ -46,39 +59,47 @@ describe('feedback', () => {
         expect(again.vote).toBe(1);
     });
 
-    test('recordVote sets the vote and returns the record', async () => {
-        await recordContent({ type: 'post', platform: 'bluesky', id: 'v', content: 'x' });
-        const up = await recordVote({ type: 'post', platform: 'bluesky', id: 'v', vote: 1 });
+    test('recordVote sets the vote by post id (content hash)', async () => {
+        const rec = await recordContent({ type: 'post', platform: 'bluesky', id: 'v', content: 'vote me' });
+        const up = await recordVote({ type: 'post', id: rec.id, vote: 1 });
         expect(up.vote).toBe(1);
-        const down = await recordVote({ type: 'post', platform: 'bluesky', id: 'v', vote: -1 });
+        const down = await recordVote({ type: 'post', id: rec.id, vote: -1 });
         expect(down.vote).toBe(-1);
     });
 
     test('recordVote returns null for unknown items', async () => {
-        expect(await recordVote({ type: 'post', platform: 'bluesky', id: 'missing', vote: 1 })).toBeNull();
+        expect(await recordVote({ type: 'post', id: 'missing', vote: 1 })).toBeNull();
     });
 
     test('recordVote rejects invalid vote values', async () => {
-        await recordContent({ type: 'post', platform: 'bluesky', id: 'q', content: 'x' });
-        await expect(recordVote({ type: 'post', platform: 'bluesky', id: 'q', vote: 5 })).rejects.toThrow();
+        const rec = await recordContent({ type: 'post', platform: 'bluesky', id: 'q', content: 'x' });
+        await expect(recordVote({ type: 'post', id: rec.id, vote: 5 })).rejects.toThrow();
     });
 
     test('listFeedback sorts newest first and filters by type', async () => {
-        await kv.put('feedback:post:bluesky:old', JSON.stringify({
-            id: 'old', type: 'post', platform: 'bluesky', content: 'o',
+        await kv.put('feedback:post:oldhash', JSON.stringify({
+            id: 'oldhash', type: 'post', platforms: ['bluesky'], content: 'o',
             createdAt: '2020-01-01T00:00:00.000Z', vote: 0
         }));
         await kv.put('feedback:reply:mastodon:new', JSON.stringify({
-            id: 'new', type: 'reply', platform: 'mastodon', content: 'n',
+            id: 'new', type: 'reply', platforms: ['mastodon'], content: 'n',
             createdAt: '2024-01-01T00:00:00.000Z', vote: 1
         }));
 
         const all = await listFeedback();
-        expect(all.map(r => r.id)).toEqual(['new', 'old']);
+        expect(all.map(r => r.id)).toEqual(['new', 'oldhash']);
 
         const replies = await listFeedback({ type: 'reply' });
         expect(replies).toHaveLength(1);
         expect(replies[0].id).toBe('new');
+    });
+
+    test('clearFeedback removes all records', async () => {
+        await recordContent({ type: 'post', platform: 'mastodon', id: 'a', content: 'one' });
+        await recordContent({ type: 'reply', platform: 'bluesky', id: 'b', content: 'two' });
+        const removed = await clearFeedback();
+        expect(removed).toBe(2);
+        expect(await listFeedback()).toEqual([]);
     });
 
     test('summarizeFeedback tallies votes', () => {

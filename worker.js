@@ -3,7 +3,7 @@ import { debug } from './log.js';
 import { main, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
 import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI, loadRecentPostsFromKV } from './replies.js';
-import { initFeedback, recordVote, listFeedback, summarizeFeedback } from './feedback.js';
+import { initFeedback, recordVote, listFeedback, clearFeedback, summarizeFeedback } from './feedback.js';
 import { renderDashboard } from './dashboard.js';
 
 // Create a global process.env if it doesn't exist
@@ -264,6 +264,17 @@ export default {
                         items,
                         stats: summarizeFeedback(items)
                     }), {
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                return new Response('Method not allowed', { status: 405 });
+            }
+
+            // Delete all feedback records (wipe test/junk data)
+            if (url.pathname === '/api/feedback/clear') {
+                if (request.method === 'POST') {
+                    const removed = await clearFeedback();
+                    return new Response(JSON.stringify({ success: true, removed }), {
                         headers: { 'Content-Type': 'application/json' }
                     });
                 }

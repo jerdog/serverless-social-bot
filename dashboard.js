@@ -83,12 +83,25 @@ export function renderDashboard() {
   .time { color: var(--muted); font-size: 12px; }
   .empty, .error { text-align: center; color: var(--muted); padding: 48px 16px; }
   .error { color: var(--down); }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .actions button {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .actions button.danger { color: var(--down); border-color: var(--down); }
+  .title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 </style>
 </head>
 <body>
 <header>
   <div class="wrap">
-    <h1>Bot Feedback Dashboard</h1>
+    <div class="title-row">
+      <h1>Bot Feedback Dashboard</h1>
+      <div class="actions">
+        <button id="refresh">↻ Refresh</button>
+        <button id="clear" class="danger">Clear all</button>
+      </div>
+    </div>
     <div class="sub">Upvote or downvote generated posts and replies to build a labeled dataset for tuning.</div>
     <div class="stats" id="stats"></div>
     <div class="filters" id="filters">
@@ -239,7 +252,9 @@ export function renderDashboard() {
 
     var meta = document.createElement('div');
     meta.className = 'meta';
-    [item.type, item.platform].forEach(function (t) {
+    // Back-compat: older records used a singular platform field.
+    var platforms = item.platforms || (item.platform ? [item.platform] : []);
+    [item.type].concat(platforms).forEach(function (t) {
       if (!t) return;
       var badge = document.createElement('span');
       badge.className = 'badge';
@@ -282,15 +297,37 @@ export function renderDashboard() {
     item.vote = value;           // optimistic
     render();
     if (btn) btn.disabled = true;
+    var platform = (item.platforms && item.platforms[0]) || item.platform || '';
     fetch('/api/vote', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: item.type, platform: item.platform, id: item.id, vote: value })
+      body: JSON.stringify({ type: item.type, platform: platform, id: item.id, vote: value })
     }).then(function (res) {
       if (!res.ok) throw new Error('vote failed');
     }).catch(function () {
       item.vote = prev;          // revert on failure
       render();
+    });
+  }
+
+  function load() {
+    listEl.textContent = '';
+    var loading = document.createElement('div');
+    loading.className = 'empty';
+    loading.textContent = 'Loading…';
+    listEl.appendChild(loading);
+    fetch('/api/feedback').then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (data) {
+      items = Array.isArray(data.items) ? data.items : [];
+      render();
+    }).catch(function () {
+      listEl.textContent = '';
+      var err = document.createElement('div');
+      err.className = 'error';
+      err.textContent = 'Failed to load feedback data.';
+      listEl.appendChild(err);
     });
   }
 
@@ -303,19 +340,17 @@ export function renderDashboard() {
     render();
   });
 
-  fetch('/api/feedback').then(function (res) {
-    if (!res.ok) throw new Error('load failed');
-    return res.json();
-  }).then(function (data) {
-    items = Array.isArray(data.items) ? data.items : [];
-    render();
-  }).catch(function () {
-    listEl.innerHTML = '';
-    var err = document.createElement('div');
-    err.className = 'error';
-    err.textContent = 'Failed to load feedback data.';
-    listEl.appendChild(err);
-  });
+  document.getElementById('refresh').onclick = load;
+
+  document.getElementById('clear').onclick = function () {
+    if (!window.confirm('Delete ALL feedback records? This cannot be undone.')) return;
+    fetch('/api/feedback/clear', { method: 'POST' })
+      .then(function (res) { if (!res.ok) throw new Error('clear failed'); return res.json(); })
+      .then(function () { modelFilter = null; load(); })
+      .catch(function () { window.alert('Failed to clear feedback.'); });
+  };
+
+  load();
 })();
 </script>
 </body>
