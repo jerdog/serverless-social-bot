@@ -55,7 +55,12 @@ async function setupEnvironment(env) {
             debug('No POSTS_KV found in env; using local storage', 'warn');
         }
 
-        debug('Environment setup complete', 'info');
+        // Surface the effective posting-safety flag so its resolved value is
+        // never ambiguous (DEBUG_MODE=true means nothing is actually posted).
+        debug('Environment setup complete', 'info', {
+            debugMode: process.env.DEBUG_MODE,
+            willActuallyPost: process.env.DEBUG_MODE !== 'true'
+        });
     } catch (error) {
         debug('Error during environment setup:', 'error', {
             error: error.message,
