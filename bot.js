@@ -480,9 +480,19 @@ async function getBlueskyAuth() {
         });
 
         if (!response.ok) {
+            // Surface Bluesky's error body (e.g. "Invalid identifier or password",
+            // "AuthFactorTokenRequired") so credential problems are diagnosable.
+            let body;
+            try {
+                body = await response.text();
+            } catch (readError) {
+                body = '<unreadable>';
+            }
             debug('Bluesky auth failed', 'error', {
                 status: response.status,
-                statusText: response.statusText
+                statusText: response.statusText,
+                identifier: username,
+                body
             });
             return null;
         }
