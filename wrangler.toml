@@ -58,3 +58,7 @@ vars = { DEBUG_MODE = "false", DEBUG_LEVEL = "verbose" }
 
 [observability.logs]
 enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
