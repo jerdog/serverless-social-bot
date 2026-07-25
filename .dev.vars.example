@@ -22,3 +22,7 @@ EXCLUDED_WORDS=word1,word2,word3
 # Debug Configuration (Optional)
 DEBUG_MODE=true
 DEBUG_LEVEL=verbose  # or "info"
+
+# Cloudflare Configuration
+CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id_here
+CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here  # Ensure this token has the necessary permissions for Workers and KV
