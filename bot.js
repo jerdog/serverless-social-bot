@@ -52,24 +52,24 @@ function stripHtmlTags(text) {
 }
 
 // Utility Functions
+// Log-level priorities (lower number = more severe). 'essential' and 'error'
+// rank at/below the minimum DEBUG_LEVEL threshold, so they always surface.
+const LOG_LEVELS = { essential: -1, error: 0, warn: 1, info: 2, verbose: 3 };
+
 function debug(message, level = 'info', data = null) {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${message}`;
-    
-    // Always log to console
-    if (data) {
-        console.log(logMessage, data);
-    } else {
-        console.log(logMessage);
+    // Gate on DEBUG_LEVEL before doing any formatting work.
+    const threshold = LOG_LEVELS[process.env.DEBUG_LEVEL] ?? LOG_LEVELS.info;
+    const priority = LOG_LEVELS[level] ?? LOG_LEVELS.info;
+    if (priority > threshold) {
+        return;
     }
 
-    // Additional debug logging if enabled
-    if (process.env.DEBUG_MODE === 'true') {
-        if (level === 'error') {
-            console.error(logMessage, data || '');
-        } else if (level === 'warn') {
-            console.warn(logMessage, data || '');
-        }
+    const logMessage = `[${new Date().toISOString()}] ${message}`;
+    const logFn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+    if (data !== null && data !== undefined) {
+        logFn(logMessage, data);
+    } else {
+        logFn(logMessage);
     }
 }
 
@@ -91,7 +91,7 @@ async function loadConfig() {
 
     // Parse optional numeric parameters
     const markovStateSize = parseInt(process.env.MARKOV_STATE_SIZE || '2', 10);
-    const markovMinChars = parseInt(process.env.MARKOV_MIN_CHARS || '30', 10);
+    const markovMinChars = parseInt(process.env.MARKOV_MIN_CHARS || '100', 10);
     const markovMaxChars = parseInt(process.env.MARKOV_MAX_CHARS || '280', 10);
     const markovMaxTries = parseInt(process.env.MARKOV_MAX_TRIES || '100', 10);
 
@@ -106,8 +106,14 @@ async function loadConfig() {
 
     // Parse optional string parameters
     const excludedWords = process.env.EXCLUDED_WORDS
-        ? process.env.EXCLUDED_WORDS.split(',').map(w => w.trim())
+        ? process.env.EXCLUDED_WORDS.split(',').map(w => w.trim()).filter(w => w.length > 0)
         : [];
+
+    // Precompile the excluded-words matcher once (regex metacharacters escaped so
+    // words like "c++" are matched literally). Reused by cleanText on every call.
+    const excludedWordsRegex = excludedWords.length > 0
+        ? new RegExp(`\\b(${excludedWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'gi')
+        : null;
 
     // Create configuration object
     CONFIG = {
@@ -127,21 +133,9 @@ async function loadConfig() {
         markovMaxTries,
         mastodonSourceAccounts,
         blueskySourceAccounts,
-        excludedWords
+        excludedWords,
+        excludedWordsRegex
     };
-
-    // Duplicate logging
-    // debug('Configuration loaded', 'info', {
-    //     markovConfig: {
-    //         stateSize: CONFIG.markovStateSize,
-    //         minChars: CONFIG.markovMinChars,
-    //         maxChars: CONFIG.markovMaxChars,
-    //         maxTries: CONFIG.markovMaxTries
-    //     },
-    //     mastodonAccounts: CONFIG.mastodonSourceAccounts,
-    //     blueskyAccounts: CONFIG.blueskySourceAccounts,
-    //     excludedWords: CONFIG.excludedWords
-    // });
 
     return CONFIG;
 }
@@ -188,10 +182,9 @@ function cleanText(text) {
         .replace(/^\.\s+/, '')
         .trim();
 
-    // Remove excluded words
-    if (CONFIG && CONFIG.excludedWords && CONFIG.excludedWords.length > 0) {
-        const excludedWordsRegex = new RegExp(`\\b(${CONFIG.excludedWords.join('|')})\\b`, 'gi');
-        text = text.replace(excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
+    // Remove excluded words (matcher precompiled once in loadConfig)
+    if (CONFIG && CONFIG.excludedWordsRegex) {
+        text = text.replace(CONFIG.excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
     }
 
     // Final cleanup of any remaining special characters
@@ -322,7 +315,7 @@ async function fetchSourceTweets(env) {
         } else {
             // Local development: try to fetch from file
             try {
-                const sourceTweetsResponse = await fetch('assets/source-tweets.txt');
+                const sourceTweetsResponse = await fetch('assets/tweets.txt');
                 if (!sourceTweetsResponse.ok) {
                     debug('Failed to fetch source tweets from file', 'error');
                     return [];
@@ -402,15 +395,15 @@ async function fetchRecentPosts() {
         
         try {
             // Get Bluesky auth token
-            const blueskyToken = await getBlueskyAuth();
-            if (!blueskyToken) {
+            const blueskyAuth = await getBlueskyAuth();
+            if (!blueskyAuth || !blueskyAuth.accessJwt) {
                 debug('Skipping Bluesky fetch due to authentication failure', 'error');
             } else {
                 // Fetch from Bluesky
                 const blueskyResponse = await fetch(`${CONFIG.bluesky.service}/xrpc/app.bsky.feed.getTimeline`, {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${blueskyToken}`
+                        'Authorization': `Bearer ${blueskyAuth.accessJwt}`
                     }
                 });
 
@@ -712,7 +705,18 @@ async function main(env) {
     try {
         // Load configuration
         CONFIG = await loadConfig();
-        debug('Configuration loaded', 'info', CONFIG);
+        // Log only non-sensitive config (never tokens/passwords).
+        debug('Configuration loaded', 'info', {
+            markovConfig: {
+                stateSize: CONFIG.markovStateSize,
+                minChars: CONFIG.markovMinChars,
+                maxChars: CONFIG.markovMaxChars,
+                maxTries: CONFIG.markovMaxTries
+            },
+            mastodonAccounts: CONFIG.mastodonSourceAccounts,
+            blueskyAccounts: CONFIG.blueskySourceAccounts,
+            excludedWords: CONFIG.excludedWords
+        });
 
         // 30% chance to post
         const randomValue = Math.random();
