@@ -209,8 +209,32 @@ any time via `GET /api/feedback`.
 
 2. Deploy to Cloudflare Workers:
    ```bash
-   wrangler deploy
+   npm run deploy       # deploys with whatever account wrangler is logged into
    ```
+
+### Deploying to a specific Cloudflare account
+
+If you have **multiple Cloudflare accounts**, use the helper script, which exports
+that account's API token + account id before running wrangler so it targets the
+right account non-interactively:
+
+```bash
+# One-time: create a credential file per account (.cloudflare/ is git-ignored)
+mkdir -p .cloudflare
+cp .cloudflare.env.example .cloudflare/personal.env   # then edit it
+
+# Deploy using that profile
+npm run deploy:account personal
+# or directly, with pass-through wrangler flags:
+./scripts/deploy.sh personal --dry-run
+```
+
+Credentials resolve in this order: `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`
+from your shell, then `.cloudflare/<profile>.env` (default profile: `default`),
+then — for the default profile only — `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`
+in `.dev.vars`. The script runs `wrangler whoami` and asks for confirmation before
+deploying (skip with `-y`). See `.cloudflare.env.example` for how to create the
+token and find the account id.
 
 ## Behavior
 
