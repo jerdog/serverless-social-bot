@@ -16,7 +16,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - Extensible for additional platforms
 
 ### AI-Powered Reply Generation
-- Generates witty, contextual replies using Cloudflare Workers AI (Gemma 4)
+- Generates witty, contextual replies using Cloudflare Workers AI (Llama 3.3 70B)
 - Supports both Mastodon and Bluesky post URLs
 - Smart reply behavior:
   - Always replies to first interaction in a thread
@@ -50,29 +50,33 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MARKOV_MAX_CHARS` - Maximum characters in generated post (default: 280)
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
 - `POST_PROBABILITY` - Chance (0-1) that each run posts (default: 0.3). Set to `1` to always post — handy for testing with `DEBUG_MODE=true`.
-- `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/google/gemma-4-26b-a4b-it`)
-- `AI_MAX_TOKENS` - Max tokens per generated reply (default: 2000; Gemma 4 thinking mode consumes tokens before answering)
+- `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
+- `AI_MAX_TOKENS` - Max tokens per generated reply (default: 200; raise to ~2000 only for thinking-mode models)
 - `AI_TEMPERATURE` - Sampling temperature for replies (default: 0.7)
 
 ## Reply Generation (Workers AI)
 
 Replies are generated with [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/)
 through the `AI` binding declared in `wrangler.toml` — there is **no external API
-key**. The default model is **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`), a
-Mixture-of-Experts model (26B total parameters, ~4B active per forward pass) that
-runs close to 4B-model speed while keeping larger-model quality.
+key**. The default model is **Llama 3.3 70B**
+(`@cf/meta/llama-3.3-70b-instruct-fp8-fast`): a 70B model quantized to fp8 and
+optimized for speed, so replies keep large-model quality while staying fast.
 
-A compact system prompt keeps input tokens low, and `AI_TEMPERATURE` sits at 0.7
-for wit without drift. `AI_MAX_TOKENS` defaults to **2000**: Gemma 4 has a
-built-in *thinking mode* and spends tokens reasoning **before** emitting the
-answer, so a tight cap (e.g. 120) makes it hit the limit mid-thought and return
-empty content. If a call fails (e.g. capacity limits), the bot backs off
-exponentially and returns a short fallback line.
+A compact system prompt keeps input tokens low, `AI_MAX_TOKENS` is 200 (a quip is
+~100 tokens), and `AI_TEMPERATURE` sits at 0.7 for wit without drift. If a call
+fails (e.g. capacity limits), the bot backs off exponentially and returns a short
+fallback line.
 
-> Prefer cheaper/faster replies? Point `WORKERS_AI_MODEL` at a non-reasoning
-> instruct model (e.g. `@cf/meta/llama-3.1-8b-instruct-fast`) and drop
-> `AI_MAX_TOKENS` back to ~150 — a one-line witty reply doesn't need step-by-step
-> reasoning, and thinking mode costs several times more per reply.
+**Why not a reasoning model?** Models with a built-in *thinking mode* (e.g. Gemma 4,
+`@cf/google/gemma-4-26b-a4b-it`) spend their token budget reasoning **before**
+emitting an answer. For a one-line quip that's wasted: they need ~2000 output
+tokens instead of ~100, cost several times more per reply, and return **empty
+content** if the cap is hit mid-thought. The code still supports them — swap
+`WORKERS_AI_MODEL` and raise `AI_MAX_TOKENS` to ~2000 if you want to compare.
+
+Every reply is tagged on the [dashboard](#feedback-dashboard) with the model that
+produced it, so you can upvote/downvote across model swaps and see which one your
+audience actually likes.
 
 > Workers AI runs against your Cloudflare account and incurs usage charges even
 > during `wrangler dev`.

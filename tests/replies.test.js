@@ -51,8 +51,8 @@ describe('generateReply (Workers AI)', () => {
             }
         });
         await generateReply('orig', 'reply');
-        expect(captured.model).toBe('@cf/google/gemma-4-26b-a4b-it');
-        expect(captured.opts.max_tokens).toBe(2000);
+        expect(captured.model).toBe('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+        expect(captured.opts.max_tokens).toBe(200);
         expect(captured.opts.temperature).toBeCloseTo(0.7);
         expect(Array.isArray(captured.opts.messages)).toBe(true);
         expect(captured.opts.messages[0].role).toBe('system');

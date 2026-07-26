@@ -5,10 +5,11 @@ import { LocalStorage } from './kv.js';
 import { postMastodonStatus, getMastodonStatus, createBlueskyRecord } from './social.js';
 import { stripHtml, stripMentions, normalizeWhitespace } from './text.js';
 
-// Default Workers AI text-generation model. Gemma 4 26B A4B is a Mixture-of-
-// Experts model (26B total params, ~4B active per pass), so it runs close to
-// 4B-model speed while keeping larger-model quality. Override via WORKERS_AI_MODEL.
-const DEFAULT_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+// Default Workers AI text-generation model. Llama 3.3 70B (fp8, speed-optimized)
+// gives large-model quality for short, quippy replies without a thinking mode —
+// reasoning models burn their whole token budget before answering, which costs
+// more and is wasted on a one-liner. Override via WORKERS_AI_MODEL.
+const DEFAULT_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 // Workers AI binding (env.AI), injected by the Worker at request/cron time.
 let aiBinding = null;
@@ -376,7 +377,7 @@ async function generateReply(originalPost, replyContent) {
         const messages = [
             {
                 role: 'system',
-                content: 'You are a witty, engaging social media bot. Reply with one clever, concise, respectful line under 400 characters. Do not include @mentions, usernames, or hashtags unless clearly relevant. Output only the reply text.'
+                content: 'You are a witty social media bot with a dry, playful sense of humor. Reply with ONE short quip — ideally a single sentence, always under 300 characters. Be clever and specific to what was said; never generic, never preachy, never an explanation of the joke. Stay good-natured, not mean. No @mentions, usernames, hashtags, emoji, or quotation marks around your reply. Output only the reply text itself.'
             },
             {
                 role: 'user',
@@ -385,7 +386,7 @@ async function generateReply(originalPost, replyContent) {
         ];
 
         const model = getReplyModel();
-        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '2000', 10);
+        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '200', 10);
         const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
 
         let result;

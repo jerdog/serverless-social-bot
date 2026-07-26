@@ -22,8 +22,8 @@ MARKOV_MAX_CHARS = "280"
 POST_PROBABILITY = "0.3"  # chance each run posts (0-1); set to "1" to always post
 MASTODON_API_URL = "https://hachyderm.io"
 BLUESKY_API_URL = "https://bsky.social"
-WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # Workers AI reply model
-AI_MAX_TOKENS = "2000"  # Gemma 4 thinking mode needs room to reason AND answer
+WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"  # quippy replies, no thinking-mode tax
+AI_MAX_TOKENS = "200"   # a one-line quip; no reasoning tokens to budget for
 AI_TEMPERATURE = "0.7"  # a bit of wit without going off the rails
 NPM_CONFIG_OMIT = "optional"
 

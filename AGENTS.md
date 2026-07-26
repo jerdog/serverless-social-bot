@@ -6,7 +6,7 @@ Guidance for AI coding agents (and humans) working in this repository.
 
 A serverless social media bot that generates original posts with **Markov chain**
 text generation and posts them to **Mastodon** and **Bluesky**. It can also
-generate **AI-powered replies** (via Cloudflare Workers AI — Gemma 4) to mentions/replies it
+generate **AI-powered replies** (via Cloudflare Workers AI — Llama 3.3 70B) to mentions/replies it
 receives. It runs on **Cloudflare Workers**, triggered on a cron schedule and via
 HTTP endpoints, and persists state in **Cloudflare KV**.
 
