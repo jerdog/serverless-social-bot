@@ -23,7 +23,7 @@ POST_PROBABILITY = "0.3"  # chance each run posts (0-1); set to "1" to always po
 MASTODON_API_URL = "https://hachyderm.io"
 BLUESKY_API_URL = "https://bsky.social"
 WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # Workers AI reply model
-AI_MAX_TOKENS = "300"   # headroom: 120 truncated Gemma 4 mid-reply
+AI_MAX_TOKENS = "2000"  # Gemma 4 thinking mode needs room to reason AND answer
 AI_TEMPERATURE = "0.7"  # a bit of wit without going off the rails
 NPM_CONFIG_OMIT = "optional"
 

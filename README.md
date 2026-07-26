@@ -51,7 +51,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
 - `POST_PROBABILITY` - Chance (0-1) that each run posts (default: 0.3). Set to `1` to always post — handy for testing with `DEBUG_MODE=true`.
 - `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/google/gemma-4-26b-a4b-it`)
-- `AI_MAX_TOKENS` - Max tokens per generated reply (default: 300)
+- `AI_MAX_TOKENS` - Max tokens per generated reply (default: 2000; Gemma 4 thinking mode consumes tokens before answering)
 - `AI_TEMPERATURE` - Sampling temperature for replies (default: 0.7)
 
 ## Reply Generation (Workers AI)
@@ -62,10 +62,17 @@ key**. The default model is **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`), a
 Mixture-of-Experts model (26B total parameters, ~4B active per forward pass) that
 runs close to 4B-model speed while keeping larger-model quality.
 
-Tuned for efficiency: a compact system prompt, `AI_MAX_TOKENS` capped at 300
-(replies stay under 400 characters), and `AI_TEMPERATURE` at 0.7 for wit without
-drift. Swap the model or params via the env vars above. If a call fails (e.g.
-capacity limits), the bot backs off exponentially and returns a short fallback line.
+A compact system prompt keeps input tokens low, and `AI_TEMPERATURE` sits at 0.7
+for wit without drift. `AI_MAX_TOKENS` defaults to **2000**: Gemma 4 has a
+built-in *thinking mode* and spends tokens reasoning **before** emitting the
+answer, so a tight cap (e.g. 120) makes it hit the limit mid-thought and return
+empty content. If a call fails (e.g. capacity limits), the bot backs off
+exponentially and returns a short fallback line.
+
+> Prefer cheaper/faster replies? Point `WORKERS_AI_MODEL` at a non-reasoning
+> instruct model (e.g. `@cf/meta/llama-3.1-8b-instruct-fast`) and drop
+> `AI_MAX_TOKENS` back to ~150 — a one-line witty reply doesn't need step-by-step
+> reasoning, and thinking mode costs several times more per reply.
 
 > Workers AI runs against your Cloudflare account and incurs usage charges even
 > during `wrangler dev`.

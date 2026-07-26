@@ -31,21 +31,24 @@ function extractReplyText(result) {
     if (!result) {
         return '';
     }
+    let raw = '';
     if (typeof result.response === 'string') {
-        return result.response.trim();
-    }
-    const choice = Array.isArray(result.choices) ? result.choices[0] : null;
-    if (choice) {
-        const content = choice.message?.content ?? choice.text;
-        if (typeof content === 'string') {
-            return content.trim();
+        raw = result.response;
+    } else {
+        const choice = Array.isArray(result.choices) ? result.choices[0] : null;
+        if (choice) {
+            const content = choice.message?.content ?? choice.text;
+            if (typeof content === 'string') {
+                raw = content;
+            } else if (Array.isArray(content)) {
+                // Some providers return content as an array of parts.
+                raw = content.map(part => (typeof part === 'string' ? part : part?.text || '')).join('');
+            }
         }
-        // Some providers return content as an array of parts.
-        if (Array.isArray(content)) {
-            return content.map(part => (typeof part === 'string' ? part : part?.text || '')).join('').trim();
-        }
     }
-    return '';
+    // Thinking-mode models may inline their reasoning in a <think> block; keep
+    // only the answer that follows it.
+    return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*<\/think>/i, '').trim();
 }
 
 // Cache to store our bot's recent posts
@@ -382,7 +385,7 @@ async function generateReply(originalPost, replyContent) {
         ];
 
         const model = getReplyModel();
-        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '300', 10);
+        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '2000', 10);
         const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
 
         let result;
@@ -409,7 +412,21 @@ async function generateReply(originalPost, replyContent) {
 
         const reply = extractReplyText(result);
         if (!reply) {
-            debug('No reply generated from Workers AI', 'warn', { result });
+            // console.log truncates nested objects to [Object], which hides the
+            // actual shape — describe it explicitly so failures are diagnosable.
+            const choice = Array.isArray(result?.choices) ? result.choices[0] : null;
+            const message = choice?.message || {};
+            debug('No reply generated from Workers AI', 'warn', {
+                finishReason: choice?.finish_reason,
+                choiceKeys: choice ? Object.keys(choice) : null,
+                messageKeys: Object.keys(message),
+                contentLength: typeof message.content === 'string' ? message.content.length : null,
+                reasoningLength: typeof message.reasoning_content === 'string' ? message.reasoning_content.length : null,
+                usage: result?.usage,
+                hint: choice?.finish_reason === 'length'
+                    ? 'Model hit max_tokens before answering (thinking mode). Raise AI_MAX_TOKENS.'
+                    : undefined
+            });
             return null;
         }
 

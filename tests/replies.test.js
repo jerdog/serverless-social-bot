@@ -27,6 +27,11 @@ describe('generateReply (Workers AI)', () => {
         expect(await generateReply('orig', 'reply')).toBe('Witty comeback!');
     });
 
+    test('strips <think> blocks from thinking-mode output', async () => {
+        initAI({ run: async () => ({ choices: [{ message: { content: '<think>Let me consider tone...</think>Sharp and short.' } }] }) });
+        expect(await generateReply('orig', 'reply')).toBe('Sharp and short.');
+    });
+
     test('reads a legacy choices[].text completion shape', async () => {
         initAI({ run: async () => ({ choices: [{ text: '  spaced out  ' }] }) });
         expect(await generateReply('orig', 'reply')).toBe('spaced out');
@@ -47,7 +52,7 @@ describe('generateReply (Workers AI)', () => {
         });
         await generateReply('orig', 'reply');
         expect(captured.model).toBe('@cf/google/gemma-4-26b-a4b-it');
-        expect(captured.opts.max_tokens).toBe(300);
+        expect(captured.opts.max_tokens).toBe(2000);
         expect(captured.opts.temperature).toBeCloseTo(0.7);
         expect(Array.isArray(captured.opts.messages)).toBe(true);
         expect(captured.opts.messages[0].role).toBe('system');
