@@ -25,6 +25,7 @@ BLUESKY_API_URL = "https://bsky.social"
 WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # Workers AI reply model
 AI_MAX_TOKENS = "120"   # replies are short; keep generation cheap/fast
 AI_TEMPERATURE = "0.7"  # a bit of wit without going off the rails
+NPM_CONFIG_OMIT = "optional"
 
 [[kv_namespaces]]
 binding = "SOURCE_TWEETS"   # KV namespace for storing source tweets
