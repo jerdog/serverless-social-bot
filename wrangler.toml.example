@@ -21,7 +21,7 @@ BLUESKY_USERNAME = "your.handle.bsky.social"
 BLUESKY_PASSWORD = "your_app_password"
 DEBUG_MODE = "false"
 WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"  # optional; this is the default
-AI_MAX_TOKENS = "120"    # optional
+AI_MAX_TOKENS = "300"    # optional
 AI_TEMPERATURE = "0.7"   # optional
 
 # Development environment variables

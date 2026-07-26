@@ -22,6 +22,32 @@ function getReplyModel() {
     return process.env.WORKERS_AI_MODEL || DEFAULT_AI_MODEL;
 }
 
+// Workers AI returns different shapes depending on the model. Classic
+// text-generation models return { response }, while others (e.g. Gemma 4, which
+// reports itself as "...-external") return an OpenAI-style chat completion with
+// { choices: [{ message: { content } }] }. Support both so a model swap doesn't
+// silently drop every reply.
+function extractReplyText(result) {
+    if (!result) {
+        return '';
+    }
+    if (typeof result.response === 'string') {
+        return result.response.trim();
+    }
+    const choice = Array.isArray(result.choices) ? result.choices[0] : null;
+    if (choice) {
+        const content = choice.message?.content ?? choice.text;
+        if (typeof content === 'string') {
+            return content.trim();
+        }
+        // Some providers return content as an array of parts.
+        if (Array.isArray(content)) {
+            return content.map(part => (typeof part === 'string' ? part : part?.text || '')).join('').trim();
+        }
+    }
+    return '';
+}
+
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
 
@@ -65,8 +91,10 @@ async function loadRecentPostsFromKV() {
         keys.forEach((key, i) => {
             const post = posts[i];
             if (post) {
-                const [platform, postId] = key.name.replace('post:', '').split(':');
-                recentPosts.set(`${platform}:${postId}`, JSON.parse(post));
+                // Keep everything after "post:" verbatim: Bluesky ids are AT URIs
+                // (at://did:plc:.../...) that themselves contain colons, so a naive
+                // split(':') would truncate them to "bluesky:at" and collide.
+                recentPosts.set(key.name.slice('post:'.length), JSON.parse(post));
             }
         });
 
@@ -354,7 +382,7 @@ async function generateReply(originalPost, replyContent) {
         ];
 
         const model = getReplyModel();
-        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '120', 10);
+        const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '300', 10);
         const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
 
         let result;
@@ -379,10 +407,19 @@ async function generateReply(originalPost, replyContent) {
         rateLimitState.backoffMinutes = INITIAL_BACKOFF_MINUTES;
         rateLimitState.resetTime = null;
 
-        const reply = (result && typeof result.response === 'string') ? result.response.trim() : '';
+        const reply = extractReplyText(result);
         if (!reply) {
             debug('No reply generated from Workers AI', 'warn', { result });
             return null;
+        }
+
+        // A reply cut off at the token limit reads badly; surface it so
+        // AI_MAX_TOKENS can be raised.
+        if (result?.choices?.[0]?.finish_reason === 'length') {
+            debug('Workers AI response hit the token limit; consider raising AI_MAX_TOKENS', 'warn', {
+                maxTokens,
+                completionTokens: result?.usage?.completion_tokens
+            });
         }
 
         // Clean up any remaining mentions or wrapping quotes.
@@ -658,6 +695,7 @@ export {
     fetchPostContent,
     loadRecentPostsFromKV,
     storeRecentPost,
+    getOriginalPost,
     initializeKV,
     initAI
 };
