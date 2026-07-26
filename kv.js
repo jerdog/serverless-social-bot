@@ -1,6 +1,11 @@
+import { debug } from './log.js';
+
 // KV operations for source tweets
 const SOURCE_TWEETS_KEY = 'source_tweets';
-const BATCH_SIZE = 128; // KV has a limit on value size, so we'll split data into batches
+// KV values cap at 25MB; at ~150 bytes/entry this keeps a 45k-entry corpus to
+// ~9 batches instead of ~352, cutting reads/writes and subrequests ~39x.
+// Reads use the stored _count, so existing data keeps working.
+const BATCH_SIZE = 5000;
 
 // In-memory KV shim used as a fallback for local development and tests. Exposes
 // the subset of the Cloudflare KV API this project relies on.
@@ -11,23 +16,22 @@ export class LocalStorage {
 
     async put(key, value) {
         this.store.set(key, value);
-        return Promise.resolve();
     }
 
     async get(key) {
-        return Promise.resolve(this.store.get(key));
+        return this.store.get(key);
     }
 
     async delete(key) {
         this.store.delete(key);
-        return Promise.resolve();
     }
 
     async list({ prefix }) {
-        const keys = Array.from(this.store.keys())
-            .filter(key => key.startsWith(prefix))
-            .map(name => ({ name }));
-        return Promise.resolve({ keys });
+        return {
+            keys: Array.from(this.store.keys())
+                .filter(key => key.startsWith(prefix))
+                .map(name => ({ name }))
+        };
     }
 }
 
@@ -36,7 +40,7 @@ async function storeSourceTweets(env, tweets, append = false) {
         let existingTweets = [];
         if (append) {
             existingTweets = await getSourceTweets(env);
-            console.log('Appending to existing tweets:', {
+            debug('Appending to existing tweets', 'info', {
                 existingCount: existingTweets.length,
                 newCount: tweets.length
             });
@@ -63,7 +67,7 @@ async function storeSourceTweets(env, tweets, append = false) {
         await Promise.all(promises);
         return true;
     } catch (error) {
-        console.error('Failed to store source tweets:', error);
+        debug('Failed to store source tweets:', 'error', error);
         return false;
     }
 }
@@ -91,7 +95,7 @@ export async function getSourceTweets(env) {
             .map(batch => JSON.parse(batch))
             .flat();
     } catch (error) {
-        console.error('Failed to retrieve source tweets:', error);
+        debug('Failed to retrieve source tweets:', 'error', error);
         return [];
     }
 }
@@ -110,7 +114,7 @@ export async function getTweetCount(env) {
         const totalStr = await env.SOURCE_TWEETS.get(`${SOURCE_TWEETS_KEY}_total`);
         return totalStr ? parseInt(totalStr, 10) : 0;
     } catch (error) {
-        console.error('Failed to get tweet count:', error);
+        debug('Failed to get tweet count:', 'error', error);
         return 0;
     }
 }

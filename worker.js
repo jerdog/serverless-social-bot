@@ -1,10 +1,16 @@
-// Import only the necessary functions
 import { debug } from './log.js';
 import { main, getBlueskyAuth } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI, loadRecentPostsFromKV } from './replies.js';
+import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI } from './replies.js';
 import { initFeedback, recordVote, listFeedback, clearFeedback, summarizeFeedback } from './feedback.js';
 import { renderDashboard } from './dashboard.js';
+
+// Small response helpers — every route below returns JSON or a 405.
+const json = (body, status = 200) => new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+});
+const methodNotAllowed = () => new Response('Method not allowed', { status: 405 });
 
 // Create a global process.env if it doesn't exist
 if (typeof process === 'undefined' || typeof process.env === 'undefined') {
@@ -44,12 +50,14 @@ async function setupEnvironment(env) {
             debug('No AI binding found in env; reply generation will be disabled', 'warn');
         }
         
-        // Initialize KV namespace
+        // Initialize KV namespace. The recent-posts cache is intentionally NOT
+        // warmed here: it cost a KV list + N gets on every request (including
+        // /dashboard, which never reads it). handleBlueskyReply loads it lazily
+        // and getOriginalPost falls back to a direct KV get on a miss.
         if (env.POSTS_KV) {
-            await initializeKV(env.POSTS_KV);
+            initializeKV(env.POSTS_KV);
             initFeedback(env.POSTS_KV);
-            await loadRecentPostsFromKV();
-            debug('KV initialized and posts loaded', 'info');
+            debug('KV initialized', 'info');
         } else {
             initFeedback(null);
             debug('No POSTS_KV found in env; using local storage', 'warn');
@@ -193,20 +201,16 @@ export default {
                     const success = await uploadSourceTweetsFromText(env, text, append);
                     const totalTweets = await getTweetCount(env);
                     
-                    return new Response(JSON.stringify({ 
+                    return json({ 
                         success,
                         totalTweets,
                         mode: append ? 'append' : 'replace'
-                    }), {
-                        headers: { 'Content-Type': 'application/json' }
                     });
                 } else if (request.method === 'GET') {
                     const count = await getTweetCount(env);
-                    return new Response(JSON.stringify({ count }), {
-                        headers: { 'Content-Type': 'application/json' }
-                    });
+                    return json({ count });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Test reply generation
@@ -214,10 +218,7 @@ export default {
                 if (request.method === 'POST') {
                     const { postUrl, replyContent } = await request.json();
                     if (!postUrl || !replyContent) {
-                        return new Response('Missing postUrl or replyContent in request body', { 
-                            status: 400,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
+                        return json({ error: 'Missing postUrl or replyContent in request body' }, 400);
                     }
 
                     debug('Testing reply generation...', 'info', { postUrl, replyContent });
@@ -225,24 +226,19 @@ export default {
                     // Fetch the original post content
                     const originalPost = await fetchPostContent(postUrl);
                     if (!originalPost) {
-                        return new Response('Failed to fetch post content', { 
-                            status: 400,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
+                        return json({ error: 'Failed to fetch post content' }, 400);
                     }
 
                     const generatedReply = await generateReply(originalPost, replyContent);
                     
-                    return new Response(JSON.stringify({ 
+                    return json({ 
                         postUrl,
                         originalPost,
                         replyContent,
                         generatedReply
-                    }), {
-                        headers: { 'Content-Type': 'application/json' }
                     });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Serve the feedback dashboard
@@ -252,7 +248,7 @@ export default {
                         headers: { 'Content-Type': 'text/html; charset=utf-8' }
                     });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Feedback data for the dashboard
@@ -260,25 +256,21 @@ export default {
                 if (request.method === 'GET') {
                     const type = url.searchParams.get('type');
                     const items = await listFeedback({ type: type || null });
-                    return new Response(JSON.stringify({
+                    return json({
                         items,
                         stats: summarizeFeedback(items)
-                    }), {
-                        headers: { 'Content-Type': 'application/json' }
                     });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Delete all feedback records (wipe test/junk data)
             if (url.pathname === '/api/feedback/clear') {
                 if (request.method === 'POST') {
                     const removed = await clearFeedback();
-                    return new Response(JSON.stringify({ success: true, removed }), {
-                        headers: { 'Content-Type': 'application/json' }
-                    });
+                    return json({ success: true, removed });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Record an up/down vote
@@ -288,32 +280,21 @@ export default {
                     try {
                         payload = await request.json();
                     } catch (parseError) {
-                        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-                            status: 400,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
+                        return json({ error: 'Invalid JSON body' }, 400);
                     }
 
                     const { type, platform, id, vote } = payload;
                     try {
                         const record = await recordVote({ type, platform, id, vote });
                         if (!record) {
-                            return new Response(JSON.stringify({ error: 'Item not found' }), {
-                                status: 404,
-                                headers: { 'Content-Type': 'application/json' }
-                            });
+                            return json({ error: 'Item not found' }, 404);
                         }
-                        return new Response(JSON.stringify({ success: true, record }), {
-                            headers: { 'Content-Type': 'application/json' }
-                        });
+                        return json({ success: true, record });
                     } catch (voteError) {
-                        return new Response(JSON.stringify({ error: voteError.message }), {
-                            status: 400,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
+                        return json({ error: voteError.message }, 400);
                     }
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Handle bot execution
@@ -324,7 +305,7 @@ export default {
                     debug('Bot execution completed');
                     return new Response('Bot execution completed', { status: 200 });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             // Handle checking notifications
@@ -334,7 +315,7 @@ export default {
                     await checkNotifications();
                     return new Response('Notifications checked', { status: 200 });
                 }
-                return new Response('Method not allowed', { status: 405 });
+                return methodNotAllowed();
             }
 
             return new Response('Not found', { status: 404 });
@@ -352,11 +333,11 @@ export default {
             debug('Starting scheduled execution...');
             
             // Run the main bot
-            await ctx.waitUntil(main(env));
+            ctx.waitUntil(main(env));
             debug('Main execution completed');
 
             // Check for and handle replies
-            await ctx.waitUntil(checkNotifications());
+            ctx.waitUntil(checkNotifications());
             debug('Notification check completed');
             
             debug('Scheduled execution completed');

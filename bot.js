@@ -1,4 +1,3 @@
-// Essential imports only
 import fetch from 'node-fetch';
 import { debug } from './log.js';
 import { getSourceTweets } from './kv.js';
@@ -168,12 +167,9 @@ function cleanText(text) {
         .replace(/\b[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}\b/gi, '')
         // Remove mentions (@username) - handle various formats including dots and Unicode
         .replace(/@[a-zA-Z0-9_\u0080-\uFFFF](?:[a-zA-Z0-9_\u0080-\uFFFF.-]*[a-zA-Z0-9_\u0080-\uFFFF])?/g, '')
-        // Remove mention prefixes (e.g., ".@username" or ". @username")
-        .replace(/(?:^|\s)\.\s*@\w+/g, '')
-        // Remove RT pattern and any following mentions
-        .replace(/^RT\b[^a-zA-Z]*(?:@\w+[^a-zA-Z]*)*/, '')
-        // Remove any remaining colons after mentions
-        .replace(/(?:^|\s)@\w+:\s*/g, ' ')
+        // Leading RT marker. (Any "@name" it used to also strip is already gone:
+        // the mention pass above removes every mention in the string.)
+        .replace(/^RT\b[^a-zA-Z]*/, '')
         // Clean up punctuation and whitespace, including leading dots
         .replace(/[:\s]+/g, ' ')
         .replace(/^\.\s+/, '')
@@ -184,13 +180,9 @@ function cleanText(text) {
         text = text.replace(CONFIG.excludedWordsRegex, '').replace(/\s+/g, ' ').trim();
     }
 
-    // Final cleanup of any remaining special characters
-    text = text
-        // eslint-disable-next-line no-control-regex
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-        .replace(/\s+/g, ' ')
-        .trim();
-
+    // No trailing control-char/whitespace pass here: the URL and mention
+    // passes only delete characters, so they cannot reintroduce what the
+    // normalization above already stripped.
     return text;
 }
 
@@ -220,12 +212,15 @@ class MarkovChain {
                 const state = words.slice(i, i + this.stateSize).join(' ');
                 const nextWord = words[i + this.stateSize];
 
-                if (!this.chain.has(state)) {
-                    this.chain.set(state, []);
+                // Single Map lookup instead of has/set/get (three hashes of the
+                // same key) — this loop runs ~855k times for a 45k-entry corpus.
+                let transitions = this.chain.get(state);
+                if (!transitions) {
+                    transitions = [];
+                    this.chain.set(state, transitions);
                 }
-
                 if (nextWord) {
-                    this.chain.get(state).push(nextWord);
+                    transitions.push(nextWord);
                 }
 
                 if (i === 0) {
@@ -264,32 +259,43 @@ class MarkovChain {
         }
 
         const startState = this.startStates[Math.floor(Math.random() * this.startStates.length)];
+        // Keep the words as an array: deriving the next state from the accumulated
+        // string meant re-splitting it for every candidate word (O(n^2) per post).
+        const resultWords = startState.split(/\s+/);
+        const tailSize = this.stateSize - 1;
         let currentState = startState;
-        let result = startState;
-        let usedStates = new Set([startState]);
+        const usedStates = new Set([startState]);
         let possibleNextWords = this.chain.get(currentState);
 
         while (possibleNextWords && possibleNextWords.length > 0) {
-            // Shuffle possible next words to increase variation
-            const shuffledWords = [...possibleNextWords].sort(() => Math.random() - 0.5);
-            let foundNew = false;
+            const tail = resultWords.slice(-tailSize);
+            const count = possibleNextWords.length;
+            // Walk the candidates from a random offset instead of copying and
+            // sorting the whole list — popular states hold thousands of words and
+            // the first unused candidate almost always wins.
+            const offset = Math.floor(Math.random() * count);
+            let nextWord = null;
+            let nextState = null;
 
-            for (const nextWord of shuffledWords) {
-                const newState = result.split(/\s+/).slice(-(this.stateSize - 1)).concat(nextWord).join(' ');
-                if (!usedStates.has(newState)) {
-                    result += ' ' + nextWord;
-                    currentState = newState;
-                    usedStates.add(newState);
-                    foundNew = true;
+            for (let i = 0; i < count; i++) {
+                const candidate = possibleNextWords[(offset + i) % count];
+                const candidateState = tail.concat(candidate).join(' ');
+                if (!usedStates.has(candidateState)) {
+                    nextWord = candidate;
+                    nextState = candidateState;
                     break;
                 }
             }
 
-            if (!foundNew) break;
+            if (nextWord === null) break;
+
+            resultWords.push(nextWord);
+            currentState = nextState;
+            usedStates.add(nextState);
             possibleNextWords = this.chain.get(currentState);
         }
 
-        return result;
+        return resultWords.join(' ');
     }
 }
 

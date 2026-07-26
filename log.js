@@ -22,4 +22,4 @@ function debug(message, level = 'info', data = null) {
     }
 }
 
-export { debug, LOG_LEVELS };
+export { debug };

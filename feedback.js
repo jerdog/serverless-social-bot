@@ -37,11 +37,12 @@ function hashContent(content) {
 // Key scheme: posts by content hash (deduped across platforms); replies per
 // platform+id. For posts, `id` IS the content hash (also stored on the record),
 // so the dashboard can vote by that id without knowing the content.
-function postKey(hash) {
-    return `${FEEDBACK_PREFIX}post:${hash}`;
-}
-function replyKey(platform, id) {
-    return `${FEEDBACK_PREFIX}reply:${platform}:${id}`;
+// Single place the type -> key mapping is stated. Posts are keyed by content
+// hash (deduped across platforms), replies by platform + id.
+function feedbackKey(type, platform, id) {
+    return type === 'post'
+        ? `${FEEDBACK_PREFIX}post:${id}`
+        : `${FEEDBACK_PREFIX}reply:${platform}:${id}`;
 }
 
 // List all feedback keys, following KV pagination so nothing is dropped.
@@ -51,7 +52,7 @@ async function listAllKeys() {
     let complete = false;
     while (!complete) {
         const res = await feedbackKV.list({ prefix: FEEDBACK_PREFIX, cursor });
-        keys.push(...res.keys);
+        for (const k of res.keys) keys.push(k);
         // LocalStorage returns no list_complete (=> undefined => treat as done).
         complete = res.list_complete !== false;
         cursor = res.cursor;
@@ -72,7 +73,7 @@ async function recordContent({ type, platform, id, content, context = null, mode
     }
 
     const recordId = type === 'post' ? hashContent(content) : String(id);
-    const key = type === 'post' ? postKey(recordId) : replyKey(platform, recordId);
+    const key = feedbackKey(type, platform, recordId);
 
     try {
         const existing = await feedbackKV.get(key);
@@ -124,7 +125,7 @@ async function recordVote({ type, platform, id, vote }) {
         throw new Error('Vote must be -1, 0, or 1');
     }
 
-    const key = type === 'post' ? postKey(id) : replyKey(platform, id);
+    const key = feedbackKey(type, platform, id);
     const existing = await feedbackKV.get(key);
     if (!existing) {
         return null;

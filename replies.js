@@ -55,20 +55,23 @@ function extractReplyText(result) {
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
 
+// How long a handled-notification marker lives. Applied on both platforms so a
+// debug-mode run can't permanently suppress a real reply.
+const REPLIED_TTL = { expirationTtl: 86400 }; // 24 hours
+function markReplied(replyKey) {
+    return getKVNamespace().put(replyKey, 'true', REPLIED_TTL);
+}
+
 // KV namespace for storing posts
 let _postsKV = null;
-let kvInitialized = false;
 const _localStorage = new LocalStorage();
 
 // Initialize KV namespace
-async function initializeKV(namespace) {
+function initializeKV(namespace) {
     if (!namespace) {
         debug('No KV namespace provided, using local storage', 'warn');
-        _postsKV = _localStorage;
-    } else {
-        _postsKV = namespace;
     }
-    kvInitialized = true;
+    _postsKV = namespace || _localStorage;
 }
 
 // Helper to get KV namespace
@@ -78,7 +81,7 @@ function getKVNamespace() {
 
 // Load recent posts from KV storage
 async function loadRecentPostsFromKV() {
-    if (!kvInitialized) {
+    if (!_postsKV) {
         throw new Error('Cannot load posts - KV not initialized');
     }
 
@@ -338,7 +341,7 @@ function getFallbackResponse() {
     return fallbackResponses[index];
 }
 
-// Generate a reply using Workers AI (Gemma 4 by default).
+// Generate a reply using Workers AI (see DEFAULT_AI_MODEL above).
 async function generateReply(originalPost, replyContent) {
     try {
         if (!originalPost || !replyContent) {
@@ -522,7 +525,7 @@ async function handleMastodonReply(notification) {
         if (isOurPost) {
             debug('Skipping reply to our own post', 'info', { postId: notification.status.id });
             // Mark as replied to prevent future processing
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await markReplied(replyKey);
             return;
         }
 
@@ -531,7 +534,7 @@ async function handleMastodonReply(notification) {
         if (!reply) {
             debug('No reply generated', 'warn');
             // Still mark as processed to prevent retries
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await markReplied(replyKey);
             return;
         }
 
@@ -567,7 +570,7 @@ async function handleMastodonReply(notification) {
             });
 
             // Mark as replied to prevent duplicate replies
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await markReplied(replyKey);
             
             debug('Successfully posted reply', 'info', {
                 replyId: postedReply.id,
@@ -590,7 +593,7 @@ async function handleMastodonReply(notification) {
                 model: getReplyModel()
             });
             // Even in debug mode, mark as replied to prevent duplicate processing
-            await getKVNamespace().put(replyKey, 'true', { expirationTtl: 86400 }); // 24 hours
+            await markReplied(replyKey);
         }
     } catch (error) {
         debug('Error handling Mastodon reply:', 'error', error);
@@ -650,7 +653,7 @@ async function handleBlueskyReply(notification) {
                 model: getReplyModel()
             });
             // Still store that we "replied" to prevent duplicate debug logs
-            await getKVNamespace().put(replyKey, 'true');
+            await markReplied(replyKey);
             debug('Marked post as replied to (debug mode)', 'info', { replyKey });
             return;
         }
@@ -697,7 +700,7 @@ async function handleBlueskyReply(notification) {
             context: originalPost,
             model: getReplyModel()
         });
-        await getKVNamespace().put(replyKey, 'true');
+        await markReplied(replyKey);
         debug('Successfully replied to Bluesky post', 'info', { replyKey });
 
     } catch (error) {

@@ -220,7 +220,7 @@ export function renderDashboard() {
     btn.onclick = function () {
       // Toggle off if the same vote is clicked again.
       var next = item.vote === value ? 0 : value;
-      castVote(item, next, btn);
+      castVote(item, next);
     };
     return btn;
   }
@@ -292,11 +292,10 @@ export function renderDashboard() {
     visible.forEach(function (item) { listEl.appendChild(renderCard(item)); });
   }
 
-  function castVote(item, value, btn) {
+  function castVote(item, value) {
     var prev = item.vote;
     item.vote = value;           // optimistic
     render();
-    if (btn) btn.disabled = true;
     var platform = (item.platforms && item.platforms[0]) || item.platform || '';
     fetch('/api/vote', {
       method: 'POST',
