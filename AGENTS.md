@@ -28,10 +28,14 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 | `social.js` | Thin Mastodon/Bluesky request helpers (`postMastodonStatus`, `getMastodonStatus`, `createBlueskyRecord`) — centralizes host + auth headers. |
 | `text.js` | Small composable text helpers (`stripHtml`, `stripMentions`, `normalizeWhitespace`). |
 | `assets/tweets.txt` | Local sample corpus used by tests. |
-| `tests/` | Jest tests (`bot.test.js`, `markov.test.js`) + `setup.js`. |
+| `tests/` | Jest tests: `bot.test.js`, `markov.test.js`, `replies.test.js`, `feedback.test.js`, `text.test.js`, plus `setup.js`. |
+| `scripts/deploy.sh` / `scripts/dev.sh` | Deploy / run `wrangler dev` against a specific Cloudflare account. |
+| `scripts/lib/cloudflare-env.sh` | Shared credential resolver sourced by both scripts (not executable on its own). |
 | `scripts/release.sh` | Version-bump + push release helper (must run on `main`). |
+| `eslint.config.js` | ESLint 9 flat config (replaces the old `.eslintrc.yml`). |
+| `.npmrc` | `include=optional` — keeps optional deps installed (jest's resolver needs them). |
 | `.github/workflows/` | `ci.yml` (lint + test on every push/PR) and `publish.yml` (npm publish + Cloudflare deploy on GitHub release). |
-| `wrangler.toml` | Worker config: cron trigger, `[vars]`, and two KV namespace bindings. |
+| `wrangler.toml` | Worker config: cron trigger, `[ai]` binding, `[vars]`, and two KV namespace bindings. |
 
 ## Architecture & data flow
 
@@ -59,22 +63,30 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
   content, record it there too (with its `model`).
 - **Config object:** `loadConfig()` in `bot.js` validates required env vars and
   builds the module-global `CONFIG`. Call it before anything that reads `CONFIG`.
-- **Posting flow:** `main()` → 30% random gate → `fetchTextContent()` (source
-  tweets + live timeline posts) → `generatePost()` (Markov) → `postToSocialMedia()`.
+- **Posting flow:** `main()` → random gate (`POST_PROBABILITY`, default 0.3) →
+  `fetchTextContent()` (source tweets + live timeline posts) → `generatePost()`
+  (Markov) → `postToSocialMedia()`.
 - **Reply flow:** `checkNotifications()` (in `worker.js`) polls Mastodon/Bluesky
   notifications → `handleMastodonReply` / `handleBlueskyReply` in `replies.js` →
   `generateReply()` (Workers AI via the `AI` binding) → post + mark handled in KV.
+  There is **no probability gate, age cutoff, or excluded-words filter on replies**;
+  the real gate on Bluesky is that `notification.reasonSubject` must match a post
+  the bot stored in `POSTS_KV`. Each handled notification is deduped by a
+  `replied:<platform>:<id>` KV key.
 
 ## HTTP endpoints (see `worker.js`)
 
-- `POST /run` — run the bot once (still subject to the 30% gate).
+- `POST /run` — run the bot once (subject to the `POST_PROBABILITY` gate).
 - `POST /upload-tweets` — append (or replace with `X-Append: false`) source corpus.
 - `GET /upload-tweets` — return the stored corpus count.
 - `POST /test-reply` — generate a reply for a given `postUrl`/`replyContent` without posting.
 - `POST /check-replies` — poll and process notifications.
 - `GET /dashboard` — HTML feedback dashboard (upvote/downvote generated content).
 - `GET /api/feedback` — JSON list of recorded items + stats (optional `?type=post|reply`).
-- `POST /api/vote` — set a vote: `{ type, platform, id, vote }`, `vote` ∈ `{1,0,-1}`.
+- `POST /api/vote` — set a vote: `{ type, id, vote }` (replies also need `platform`), `vote` ∈ `{1,0,-1}`.
+- `POST /api/feedback/clear` — delete all feedback records.
+
+All endpoints are unauthenticated; production is expected to sit behind Cloudflare Access.
 
 ## Commands
 
@@ -146,11 +158,28 @@ of ESM + Jest. Run individual tests with, e.g.,
 ## Gotchas
 
 - `getBlueskyAuth()` returns an **object** `{ did, accessJwt, refreshJwt }`, not a
-  bare token string. Use `auth.accessJwt` in `Authorization` headers.
+  bare token string. Use `auth.accessJwt` in `Authorization` headers. Successful
+  sessions are memoized for 50 minutes, keyed by identifier.
 - `process.env` is populated at request/cron time by `setupEnvironment`; it is not
   reliably available at module load. Read env inside handlers/functions.
 - Bluesky post URIs vs. web URLs differ; reply threading uses AT-URIs
-  (`notification.reasonSubject`, `notification.uri`).
+  (`notification.reasonSubject`, `notification.uri`). **AT URIs contain colons**
+  (`at://did:plc:…`), so never `split(':')` a `platform:id` key — slice off the
+  prefix instead, or Bluesky ids collapse to `bluesky:at` and collide.
+- **Workers AI response shapes differ by model.** Classic text-generation models
+  return `{ response }`; others (Gemma 4, anything reporting `…-external`) return an
+  OpenAI-style `{ choices: [{ message: { content } }] }`. `extractReplyText()` handles
+  both — keep it that way when swapping models, or replies silently vanish.
+- **Thinking-mode models** (e.g. Gemma 4) spend the token budget reasoning before
+  answering: with a low `AI_MAX_TOKENS` they hit the cap mid-thought and return empty
+  content. The default model is deliberately a non-reasoning instruct model.
+- `wrangler dev` binds the **preview** KV namespaces, which are separate from
+  production. Local posts/corpus are invisible to the deployed Worker and vice versa.
+- Wrangler authenticates from **shell env vars**, not `.dev.vars` (which only feeds
+  the Worker's runtime bindings). Use `npm run dev` / `scripts/deploy.sh`.
+- The lockfile must stay complete for `npm ci` on Linux (CI + Cloudflare build); a
+  macOS `npm install` can prune platform-optional deps. See README
+  "Updating dependencies".
 
 ## Working agreement for agents
 

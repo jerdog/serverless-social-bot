@@ -17,15 +17,11 @@ A serverless bot that generates and posts content using Markov chain text genera
 
 ### AI-Powered Reply Generation
 - Generates witty, contextual replies using Cloudflare Workers AI (Llama 3.3 70B)
-- Supports both Mastodon and Bluesky post URLs
-- Smart reply behavior:
-  - Always replies to first interaction in a thread
-  - 30% chance to reply to subsequent interactions
-  - Skips replies containing excluded words
-  - Won't reply to posts older than 24 hours
-  - Avoids replying to its own posts
-- Test endpoint for trying replies before posting
-- Configurable response style and tone
+- Replies to Mastodon mentions and to Bluesky replies on the bot's own posts
+- Replies once per notification (tracked in KV, so re-running is safe)
+- Falls back to a short canned line if the model is unavailable
+- Test endpoint (`/test-reply`) for trying replies before posting
+- Configurable model, token budget, and temperature
 
 ## Configuration
 
@@ -299,24 +295,32 @@ token and find the account id.
 - Supports multiple social media platforms
 
 ## Reply Behavior
-The bot uses the following criteria to determine when to reply:
 
-1. **First Interactions**
-   - Always replies to the first interaction in a thread
-   - Helps establish initial engagement
+Replies are checked on the cron schedule (every 2 hours) and on demand via
+`POST /check-replies`. Unlike posting, replying has **no probability gate** — if a
+notification passes the checks below, the bot replies.
 
-2. **Subsequent Interactions**
-   - 30% chance to reply to follow-up messages
-   - Prevents excessive back-and-forth conversations
+**Mastodon** — processes `mention` notifications:
+1. Skips if already handled (KV key `replied:mastodon:<notification id>`, 24h TTL).
+2. Looks up the post being replied to (memory cache → KV → Mastodon API).
+3. Skips if the mention is on one of the bot's own posts (avoids self-conversation).
+4. Generates a reply and posts it as `@user <reply>`, threaded to the mention.
 
-3. **Content Filtering**
-   - Skips replies containing words from `EXCLUDED_WORDS`
-   - Won't reply to its own posts
-   - Ignores posts older than 24 hours
+**Bluesky** — processes `reply` notifications:
+1. **Only replies to threads on the bot's own posts** — the reply target
+   (`reasonSubject`) must match a post stored in `POSTS_KV`. Anything else logs
+   `Not a reply to our post` and is skipped. This is the most common reason a reply
+   doesn't happen: posts made before the bot stored them (or from a different
+   environment's KV) aren't recognized.
+2. Skips if already handled (KV key `replied:bluesky:<uri>`).
+3. Generates a reply and posts it threaded to the notification.
 
-4. **Debug Mode**
-   - Set `DEBUG_MODE=true` to see detailed decision logging
-   - Helpful for understanding reply behavior
+In `DEBUG_MODE=true` both paths generate the reply and log what they *would* post
+without sending it, and still record it to the feedback dashboard.
+
+> Not implemented (despite what earlier versions of this README claimed): there is
+> no reply probability, no post-age cutoff, and `EXCLUDED_WORDS` is applied to
+> generated **posts** only, not replies.
 
 ## Testing Guide
 
@@ -360,52 +364,38 @@ There are several ways to test the reply functionality:
 
 ### Testing Different Scenarios
 
-1. **First Reply Testing**
-   - Post something from the bot
-   - Reply to it from another account
-   - Run `/check-replies` - bot should always respond
+1. **Forcing a post** — posting is random by default, so set `POST_PROBABILITY=1`
+   (with `DEBUG_MODE=true`) and every `POST /run` will generate and log a post
+   without sending it.
 
-2. **Subsequent Reply Testing**
-   - Continue the conversation
-   - Run `/check-replies` multiple times
-   - Bot should respond ~30% of the time
+2. **Reply round-trip**
+   - Post from the bot (so the post is stored in `POSTS_KV`)
+   - Reply to that post from another account
+   - Run `POST /check-replies` — the bot should reply
 
-3. **Content Filter Testing**
-   ```bash
-   # Add test words to .dev.vars
-   EXCLUDED_WORDS=test,spam,ignore
+3. **Self-reply (Mastodon)** — mention the bot from the bot's own account; the log
+   should show `Skipping reply to our own post`.
 
-   # Reply to bot with these words
-   # Bot should skip these replies
-   ```
-
-4. **Age Limit Testing**
-   - Reply to an old post (>24h)
-   - Bot should skip these replies
-
-5. **Self-Reply Testing**
-   - Reply to the bot's post using the bot's account
-   - Bot should skip these replies
+4. **Duplicate protection** — run `/check-replies` twice; the second run should log
+   `Already replied to this notification` and do nothing.
 
 ### Troubleshooting
 
-1. **Check Logs**
-   - Enable verbose logging:
-     ```
-     DEBUG_MODE=true
-     DEBUG_LEVEL=verbose
-     ```
-   - Look for "Processing notification" and "Reply decision" messages
+Set `DEBUG_MODE=true` and `DEBUG_LEVEL=verbose`, then match the log line:
 
-2. **Common Issues**
-   - API authentication errors: Check credentials in `.dev.vars`
-   - Missing replies: Verify notification fetching is working
-   - Unexpected behavior: Check debug logs for decision reasoning
+| Log line | Meaning / fix |
+| --- | --- |
+| `Environment setup complete { debugMode: 'true' … }` | Nothing will actually be posted — expected in debug mode |
+| `Skipping post based on random chance` | Normal; posting is gated by `POST_PROBABILITY` |
+| `Not a reply to our post` | The Bluesky reply target isn't a post the bot stored (wrong environment's KV, or posted before storage existed) |
+| `Already replied to this notification` | Deduped via KV; delete the `replied:*` key to retry |
+| `Bluesky auth failed` (with `body`) | Credentials — use a handle (lowercase) or email plus an **App Password** |
+| `No reply generated from Workers AI` | The log reports `finishReason` and content lengths; `finish_reason: 'length'` means the model hit `AI_MAX_TOKENS` before answering |
+| `No tweets found in KV storage` | Harmless — the Markov corpus is empty in *that* environment; the bot falls back to live timelines |
 
-3. **Testing Environment**
-   - Use `wrangler dev` for local testing
-   - Create test accounts on both platforms
-   - Keep test-payload.json in .gitignore
+**Environment gotcha:** `wrangler dev` uses the *preview* KV namespaces, which are
+separate from production. Posts made locally aren't visible to the deployed Worker
+(and vice versa), which affects both the source corpus and reply matching.
 
 ## License
 
