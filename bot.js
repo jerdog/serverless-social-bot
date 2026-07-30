@@ -3,7 +3,7 @@ import { debug } from './log.js';
 import { getSourceTweets } from './kv.js';
 import { storeRecentPost } from './replies.js';
 import { recordContent } from './feedback.js';
-import { postMastodonStatus, createBlueskyRecord } from './social.js';
+import { postMastodonStatus, createBlueskyRecord, getBlueskyAuth } from './social.js';
 
 // Generate a unique id for content created in debug mode (no real post id).
 function debugId() {
@@ -439,93 +439,6 @@ async function fetchRecentPosts() {
     }
 }
 
-// Cache a successful Bluesky session so we don't re-authenticate on every call
-// within (and across) a short-lived invocation. TTL is kept well under the
-// access token's ~2h lifetime; the cache is keyed by identifier so a credential
-// change forces a fresh login.
-let blueskyAuthCache = null;
-let blueskyAuthExpiry = 0;
-let blueskyAuthIdentifier = null;
-const BLUESKY_AUTH_TTL_MS = 50 * 60 * 1000;
-
-async function getBlueskyAuth() {
-    try {
-        const username = process.env.BLUESKY_USERNAME;
-        const password = process.env.BLUESKY_PASSWORD;
-        const apiUrl = process.env.BLUESKY_API_URL || 'https://bsky.social';
-
-        if (!username || !password) {
-            debug('Missing Bluesky credentials', 'error');
-            return null;
-        }
-
-        // Reuse a cached session while it is still fresh.
-        if (blueskyAuthCache && blueskyAuthIdentifier === username && Date.now() < blueskyAuthExpiry) {
-            debug('Reusing cached Bluesky session', 'info');
-            return blueskyAuthCache;
-        }
-
-        debug('Authenticating with Bluesky using:', 'info', username);
-        debug('Using API URL:', 'info', apiUrl);
-
-        debug('Sending Bluesky auth request...', 'info');
-        const response = await fetch(`${apiUrl}/xrpc/com.atproto.server.createSession`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                identifier: username,
-                password: password
-            })
-        });
-
-        debug('Auth response status:', 'info', {
-            status: response.status,
-            statusText: response.statusText
-        });
-
-        if (!response.ok) {
-            // Surface Bluesky's error body (e.g. "Invalid identifier or password",
-            // "AuthFactorTokenRequired") so credential problems are diagnosable.
-            let body;
-            try {
-                body = await response.text();
-            } catch (readError) {
-                body = '<unreadable>';
-            }
-            debug('Bluesky auth failed', 'error', {
-                status: response.status,
-                statusText: response.statusText,
-                identifier: username,
-                body
-            });
-            return null;
-        }
-
-        const data = await response.json();
-        
-        debug('Successfully authenticated with Bluesky', 'info', {
-            did: data.did,
-            hasAccessJwt: !!data.accessJwt,
-            hasRefreshJwt: !!data.refreshJwt
-        });
-
-        // Cache the successful session (only successes are cached).
-        blueskyAuthCache = {
-            did: data.did,
-            accessJwt: data.accessJwt,
-            refreshJwt: data.refreshJwt
-        };
-        blueskyAuthExpiry = Date.now() + BLUESKY_AUTH_TTL_MS;
-        blueskyAuthIdentifier = username;
-        return blueskyAuthCache;
-    } catch (error) {
-        debug('Error authenticating with Bluesky:', 'error', error);
-        return null;
-    }
-}
-
 // Post Generation
 async function generatePost(content) {
     if (!Array.isArray(content) || content.length === 0) {
@@ -748,4 +661,4 @@ async function main(env) {
 }
 
 // Export for worker
-export { main, MarkovChain, generatePost, loadConfig, cleanText, getBlueskyAuth, debugId };
+export { main, MarkovChain, generatePost, loadConfig, cleanText, debugId };

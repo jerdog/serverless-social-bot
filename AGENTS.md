@@ -18,14 +18,14 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 
 | Path | Purpose |
 | --- | --- |
-| `worker.js` | Cloudflare Worker entry point. Defines `fetch` (HTTP routes) and `scheduled` (cron) handlers, sets up `process.env` from Worker bindings, and orchestrates the bot. |
+| `worker.js` | Cloudflare Worker entry point: `fetch` (HTTP routes) and `scheduled` (cron) handlers, plus `setupEnvironment` which copies Worker bindings into `process.env`. Deliberately thin — platform logic lives in the modules below. |
 | `bot.js` | Core logic: config loading, text cleaning, the `MarkovChain` class, source fetching, and posting to Mastodon/Bluesky. |
-| `replies.js` | Reply handling: fetch original posts, generate replies via the Workers AI binding, post replies, and track already-answered notifications in KV. Also holds the in-memory `recentPosts` cache and the reusable `LocalStorage` fallback. |
+| `replies.js` | Reply handling end to end: `checkNotifications()` polls both platforms, `handleMastodonReply`/`handleBlueskyReply` decide and post, `generateReply()` calls Workers AI. Also holds the in-memory `recentPosts` cache and the `replied:*` dedupe markers. |
 | `feedback.js` | Records every generated post/reply into `POSTS_KV` under a `feedback:` prefix and stores per-item up/down votes for model tuning. |
 | `dashboard.js` | Returns the self-contained HTML feedback dashboard served at `/dashboard`. |
 | `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus), plus the reusable `LocalStorage` in-memory KV shim. |
 | `log.js` | Leaf logging module (`debug`, `LOG_LEVELS`); dependency-free so any module can import it without cycles. |
-| `social.js` | Thin Mastodon/Bluesky request helpers (`postMastodonStatus`, `getMastodonStatus`, `createBlueskyRecord`) — centralizes host + auth headers. |
+| `social.js` | All Mastodon/Bluesky transport: request helpers (statuses, records, notifications, mark-seen) plus `getBlueskyAuth()` and its session cache. Centralizes host resolution and auth headers. |
 | `text.js` | Small composable text helpers (`stripHtml`, `stripMentions`, `normalizeWhitespace`). |
 | `assets/tweets.txt` | Local sample corpus used by tests. |
 | `tests/` | Jest tests: `bot.test.js`, `markov.test.js`, `replies.test.js`, `feedback.test.js`, `text.test.js`, plus `setup.js`. |
@@ -66,7 +66,7 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 - **Posting flow:** `main()` → random gate (`POST_PROBABILITY`, default 0.3) →
   `fetchTextContent()` (source tweets + live timeline posts) → `generatePost()`
   (Markov) → `postToSocialMedia()`.
-- **Reply flow:** `checkNotifications()` (in `worker.js`) polls Mastodon/Bluesky
+- **Reply flow:** `checkNotifications()` (in `replies.js`) polls Mastodon/Bluesky
   notifications → `handleMastodonReply` / `handleBlueskyReply` in `replies.js` →
   `generateReply()` (Workers AI via the `AI` binding) → post + mark handled in KV.
   There is no probability gate or excluded-words filter on replies, but
@@ -160,9 +160,13 @@ of ESM + Jest. Run individual tests with, e.g.,
 
 ## Gotchas
 
-- `getBlueskyAuth()` returns an **object** `{ did, accessJwt, refreshJwt }`, not a
-  bare token string. Use `auth.accessJwt` in `Authorization` headers. Successful
-  sessions are memoized for 50 minutes, keyed by identifier.
+- `getBlueskyAuth()` (in `social.js`) returns an **object**
+  `{ did, accessJwt, refreshJwt }`, not a bare token string. Use `auth.accessJwt` in
+  `Authorization` headers. Successful sessions are memoized for 50 minutes, keyed by
+  identifier.
+- **New outbound calls belong in `social.js`**, not inline `fetch` in a feature
+  module — that is how host resolution drifted before (one call site hardcoded
+  `bsky.social`, others skipped the default).
 - `process.env` is populated at request/cron time by `setupEnvironment`; it is not
   reliably available at module load. Read env inside handlers/functions.
 - Bluesky post URIs vs. web URLs differ; reply threading uses AT-URIs

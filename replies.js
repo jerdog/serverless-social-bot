@@ -1,8 +1,16 @@
 import { debug } from './log.js';
-import { getBlueskyAuth, debugId } from './bot.js';
+import { debugId } from './bot.js';
 import { recordContent } from './feedback.js';
 import { LocalStorage } from './kv.js';
-import { postMastodonStatus, getMastodonStatus, createBlueskyRecord } from './social.js';
+import {
+    postMastodonStatus,
+    getMastodonStatus,
+    createBlueskyRecord,
+    getBlueskyAuth,
+    getMastodonNotifications,
+    listBlueskyNotifications,
+    updateBlueskySeen
+} from './social.js';
 import { stripHtml, stripMentions, normalizeWhitespace } from './text.js';
 
 // Default Workers AI text-generation model. Llama 3.3 70B (fp8, speed-optimized)
@@ -748,8 +756,98 @@ async function handleBlueskyReply(notification) {
     }
 }
 
+// Check for notifications on both platforms
+async function checkNotifications() {
+    try {
+        debug('Checking for notifications...');
+        debug('Fetching Mastodon notifications...', 'info');
+
+        // Check Mastodon notifications
+        const mastodonResponse = await getMastodonNotifications();
+
+        debug('Mastodon notifications response status:', 'info', {
+            status: mastodonResponse.status,
+            statusText: mastodonResponse.statusText
+        });
+
+        if (!mastodonResponse.ok) {
+            debug('Failed to fetch Mastodon notifications', 'error', {
+                status: mastodonResponse.status,
+                statusText: mastodonResponse.statusText
+            });
+            return;
+        }
+
+        const mastodonNotifications = await mastodonResponse.json();
+        debug('Retrieved Mastodon notifications', 'info', { totalCount: mastodonNotifications.length });
+
+        // Process each Mastodon notification
+        for (const notification of mastodonNotifications) {
+            debug('Processing Mastodon notification', 'info', {
+                type: notification.type,
+                id: notification.id,
+                status: notification.status?.content
+            });
+
+            if (notification.type === 'mention') {
+                await handleMastodonReply(notification);
+            }
+        }
+
+        // Check Bluesky notifications if configured
+        if (process.env.BLUESKY_USERNAME && process.env.BLUESKY_PASSWORD) {
+            debug('Fetching Bluesky notifications...', 'info');
+            
+            // Get Bluesky auth
+            const auth = await getBlueskyAuth();
+            if (!auth || !auth.accessJwt) {
+                debug('Failed to authenticate with Bluesky - missing access token', 'error');
+                return;
+            }
+
+            // Fetch notifications using the ATP API
+            const notificationsResponse = await listBlueskyNotifications(auth);
+
+            if (!notificationsResponse.ok) {
+                debug('Failed to fetch Bluesky notifications', 'error', {
+                    status: notificationsResponse.status,
+                    statusText: notificationsResponse.statusText
+                });
+                return;
+            }
+
+            const blueskyData = await notificationsResponse.json();
+            const notifications = blueskyData.notifications || [];
+
+            debug('Retrieved Bluesky notifications', 'info', { totalCount: notifications.length });
+
+            // Process each Bluesky notification
+            for (const notification of notifications) {
+                debug('Processing Bluesky notification', 'info', {
+                    reason: notification.reason,
+                    author: notification.author?.handle,
+                    cid: notification.cid
+                });
+
+                if (notification.reason === 'reply') {
+                    await handleBlueskyReply(notification);
+                }
+            }
+
+            // Mark notifications as read
+            if (notifications.length > 0) {
+                const seenAt = new Date().toISOString();
+                await updateBlueskySeen(auth, seenAt);
+            }
+        }
+    } catch (error) {
+        debug('Error checking notifications:', 'error', error);
+    }
+}
+
 // Export all functions
 export {
+    checkNotifications,
     handleMastodonReply,
     handleBlueskyReply,
     generateReply,

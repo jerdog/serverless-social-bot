@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, beforeEach } from '@jest/globals';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from '@jest/globals';
 import { generateReply, initAI, initializeKV, loadRecentPostsFromKV, getOriginalPost, handleMastodonReply } from '../replies.js';
 import { initFeedback } from '../feedback.js';
 import { LocalStorage } from '../kv.js';
@@ -115,15 +115,26 @@ describe('loadRecentPostsFromKV', () => {
 
 describe('reply dedupe + age cutoff', () => {
     let kv;
+    let debugModeBefore;
 
     beforeEach(() => {
         process.env.DEBUG_LEVEL = 'error';
         delete process.env.REPLY_MAX_AGE_HOURS;
+        debugModeBefore = process.env.DEBUG_MODE;
+        // Debug mode so nothing is actually posted from a test.
+        process.env.DEBUG_MODE = 'true';
         kv = new LocalStorage();
         initializeKV(kv);
         initFeedback(kv);
         initAI({ run: async () => ({ response: 'a quip' }) });
-        process.env.DEBUG_MODE = 'true';
+    });
+
+    afterEach(() => {
+        if (debugModeBefore === undefined) {
+            delete process.env.DEBUG_MODE;
+        } else {
+            process.env.DEBUG_MODE = debugModeBefore;
+        }
     });
 
     test('a notification older than the cutoff is skipped entirely', async () => {

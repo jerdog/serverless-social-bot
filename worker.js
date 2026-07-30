@@ -1,7 +1,7 @@
 import { debug } from './log.js';
-import { main, getBlueskyAuth } from './bot.js';
+import { main } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { handleMastodonReply, handleBlueskyReply, generateReply, fetchPostContent, initializeKV, initAI } from './replies.js';
+import { checkNotifications, generateReply, fetchPostContent, initializeKV, initAI } from './replies.js';
 import { initFeedback, recordVote, listFeedback, clearFeedback, summarizeFeedback } from './feedback.js';
 import { renderDashboard } from './dashboard.js';
 
@@ -76,111 +76,6 @@ async function setupEnvironment(env) {
             stack: error.stack
         });
         throw error;
-    }
-}
-
-// Check for notifications on both platforms
-async function checkNotifications() {
-    try {
-        debug('Checking for notifications...');
-        debug('Fetching Mastodon notifications...', 'info');
-
-        // Check Mastodon notifications
-        const mastodonResponse = await fetch(`${process.env.MASTODON_API_URL}/api/v1/notifications?types[]=mention`, {
-            headers: {
-                'Authorization': `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`
-            }
-        });
-
-        debug('Mastodon notifications response status:', 'info', {
-            status: mastodonResponse.status,
-            statusText: mastodonResponse.statusText
-        });
-
-        if (!mastodonResponse.ok) {
-            debug('Failed to fetch Mastodon notifications', 'error', {
-                status: mastodonResponse.status,
-                statusText: mastodonResponse.statusText
-            });
-            return;
-        }
-
-        const mastodonNotifications = await mastodonResponse.json();
-        debug('Retrieved Mastodon notifications', 'info', { totalCount: mastodonNotifications.length });
-
-        // Process each Mastodon notification
-        for (const notification of mastodonNotifications) {
-            debug('Processing Mastodon notification', 'info', {
-                type: notification.type,
-                id: notification.id,
-                status: notification.status?.content
-            });
-
-            if (notification.type === 'mention') {
-                await handleMastodonReply(notification);
-            }
-        }
-
-        // Check Bluesky notifications if configured
-        if (process.env.BLUESKY_USERNAME && process.env.BLUESKY_PASSWORD) {
-            debug('Fetching Bluesky notifications...', 'info');
-            
-            // Get Bluesky auth
-            const auth = await getBlueskyAuth();
-            if (!auth || !auth.accessJwt) {
-                debug('Failed to authenticate with Bluesky - missing access token', 'error');
-                return;
-            }
-
-            // Fetch notifications using the ATP API
-            const notificationsResponse = await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.listNotifications`, {
-                headers: {
-                    'Authorization': `Bearer ${auth.accessJwt}`,
-                    'Accept': 'application/json'
-                }
-            });
-
-            if (!notificationsResponse.ok) {
-                debug('Failed to fetch Bluesky notifications', 'error', {
-                    status: notificationsResponse.status,
-                    statusText: notificationsResponse.statusText
-                });
-                return;
-            }
-
-            const blueskyData = await notificationsResponse.json();
-            const notifications = blueskyData.notifications || [];
-
-            debug('Retrieved Bluesky notifications', 'info', { totalCount: notifications.length });
-
-            // Process each Bluesky notification
-            for (const notification of notifications) {
-                debug('Processing Bluesky notification', 'info', {
-                    reason: notification.reason,
-                    author: notification.author?.handle,
-                    cid: notification.cid
-                });
-
-                if (notification.reason === 'reply') {
-                    await handleBlueskyReply(notification);
-                }
-            }
-
-            // Mark notifications as read
-            if (notifications.length > 0) {
-                const seenAt = new Date().toISOString();
-                await fetch(`${process.env.BLUESKY_API_URL}/xrpc/app.bsky.notification.updateSeen`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${auth.accessJwt}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ seenAt })
-                });
-            }
-        }
-    } catch (error) {
-        debug('Error checking notifications:', 'error', error);
     }
 }
 
