@@ -39,6 +39,7 @@ async function setupEnvironment(env) {
             MARKOV_MAX_CHARS: env.MARKOV_MAX_CHARS || '280',
             MARKOV_MAX_TRIES: env.MARKOV_MAX_TRIES || '100',
             POST_PROBABILITY: env.POST_PROBABILITY || '',
+            REPLY_MAX_AGE_HOURS: env.REPLY_MAX_AGE_HOURS || '',
             WORKERS_AI_MODEL: env.WORKERS_AI_MODEL || '',
             AI_MAX_TOKENS: env.AI_MAX_TOKENS || '',
             AI_TEMPERATURE: env.AI_TEMPERATURE || ''

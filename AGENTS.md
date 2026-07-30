@@ -69,10 +69,13 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 - **Reply flow:** `checkNotifications()` (in `worker.js`) polls Mastodon/Bluesky
   notifications → `handleMastodonReply` / `handleBlueskyReply` in `replies.js` →
   `generateReply()` (Workers AI via the `AI` binding) → post + mark handled in KV.
-  There is **no probability gate, age cutoff, or excluded-words filter on replies**;
-  the real gate on Bluesky is that `notification.reasonSubject` must match a post
-  the bot stored in `POSTS_KV`. Each handled notification is deduped by a
-  `replied:<platform>:<id>` KV key.
+  There is no probability gate or excluded-words filter on replies, but
+  notifications older than `REPLY_MAX_AGE_HOURS` (default 24) are skipped. The
+  real gate on Bluesky is that `notification.reasonSubject` must match a post the
+  bot stored in `POSTS_KV`. Each handled notification is deduped by a
+  `replied:<platform>:<id>` KV key — written with **no expiry** once a reply is
+  actually posted (platforms keep notifications forever, so an expiring marker
+  means re-replying), and with a 24h TTL for transient skips.
 
 ## HTTP endpoints (see `worker.js`)
 

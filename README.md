@@ -46,6 +46,7 @@ A serverless bot that generates and posts content using Markov chain text genera
 - `MARKOV_MAX_CHARS` - Maximum characters in generated post (default: 280)
 - `MARKOV_MAX_TRIES` - Maximum attempts to generate valid post (default: 100)
 - `POST_PROBABILITY` - Chance (0-1) that each run posts (default: 0.3). Set to `1` to always post — handy for testing with `DEBUG_MODE=true`.
+- `REPLY_MAX_AGE_HOURS` - Ignore notifications older than this (default: 24). Both platforms keep notifications in the list forever, so without a cutoff the bot can answer very old mentions.
 - `WORKERS_AI_MODEL` - Workers AI model for replies (default: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
 - `AI_MAX_TOKENS` - Max tokens per generated reply (default: 200; raise to ~2000 only for thinking-mode models)
 - `AI_TEMPERATURE` - Sampling temperature for replies (default: 0.7)
@@ -301,10 +302,11 @@ Replies are checked on the cron schedule (every 2 hours) and on demand via
 notification passes the checks below, the bot replies.
 
 **Mastodon** — processes `mention` notifications:
-1. Skips if already handled (KV key `replied:mastodon:<notification id>`, 24h TTL).
-2. Looks up the post being replied to (memory cache → KV → Mastodon API).
-3. Skips if the mention is on one of the bot's own posts (avoids self-conversation).
-4. Generates a reply and posts it as `@user <reply>`, threaded to the mention.
+1. Skips if the notification is older than `REPLY_MAX_AGE_HOURS` (default 24).
+2. Skips if already handled (KV key `replied:mastodon:<notification id>`).
+3. Looks up the post being replied to (memory cache → KV → Mastodon API).
+4. Skips if the mention is on one of the bot's own posts (avoids self-conversation).
+5. Generates a reply and posts it as `@user <reply>`, threaded to the mention.
 
 **Bluesky** — processes `reply` notifications:
 1. **Only replies to threads on the bot's own posts** — the reply target
@@ -312,15 +314,20 @@ notification passes the checks below, the bot replies.
    `Not a reply to our post` and is skipped. This is the most common reason a reply
    doesn't happen: posts made before the bot stored them (or from a different
    environment's KV) aren't recognized.
-2. Skips if already handled (KV key `replied:bluesky:<uri>`).
+2. Skips if already handled (KV key `replied:bluesky:<uri>`) or older than the cutoff.
 3. Generates a reply and posts it threaded to the notification.
+
+**Dedupe markers:** once the bot actually replies, the marker is written with **no
+expiry** — notifications never leave the platform's list, so an expiring marker
+would make the bot answer the same message again every time it lapsed. Transient
+skips (debug mode, a failed generation) use a 24h TTL so a later real run can
+still act on them.
 
 In `DEBUG_MODE=true` both paths generate the reply and log what they *would* post
 without sending it, and still record it to the feedback dashboard.
 
-> Not implemented (despite what earlier versions of this README claimed): there is
-> no reply probability, no post-age cutoff, and `EXCLUDED_WORDS` is applied to
-> generated **posts** only, not replies.
+> Not implemented: there is no reply probability, and `EXCLUDED_WORDS` is applied
+> to generated **posts** only, not replies.
 
 ## Testing Guide
 
@@ -389,6 +396,7 @@ Set `DEBUG_MODE=true` and `DEBUG_LEVEL=verbose`, then match the log line:
 | `Skipping post based on random chance` | Normal; posting is gated by `POST_PROBABILITY` |
 | `Not a reply to our post` | The Bluesky reply target isn't a post the bot stored (wrong environment's KV, or posted before storage existed) |
 | `Already replied to this notification` | Deduped via KV; delete the `replied:*` key to retry |
+| `Skipping notification older than the reply cutoff` | Older than `REPLY_MAX_AGE_HOURS`; raise it to answer older mentions |
 | `Bluesky auth failed` (with `body`) | Credentials — use a handle (lowercase) or email plus an **App Password** |
 | `No reply generated from Workers AI` | The log reports `finishReason` and content lengths; `finish_reason: 'length'` means the model hit `AI_MAX_TOKENS` before answering |
 | `No tweets found in KV storage` | Harmless — the Markov corpus is empty in *that* environment; the bot falls back to live timelines |

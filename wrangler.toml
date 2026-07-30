@@ -20,6 +20,7 @@ MARKOV_MAX_TRIES = "100"
 MARKOV_MIN_CHARS = "100"
 MARKOV_MAX_CHARS = "280"
 POST_PROBABILITY = "0.3"  # chance each run posts (0-1); set to "1" to always post
+REPLY_MAX_AGE_HOURS = "24"  # ignore notifications older than this (they stay in the list forever)
 MASTODON_API_URL = "https://hachyderm.io"
 BLUESKY_API_URL = "https://bsky.social"
 WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"  # quippy replies, no thinking-mode tax

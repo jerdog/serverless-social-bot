@@ -55,11 +55,41 @@ function extractReplyText(result) {
 // Cache to store our bot's recent posts
 const recentPosts = new Map();
 
-// How long a handled-notification marker lives. Applied on both platforms so a
-// debug-mode run can't permanently suppress a real reply.
-const REPLIED_TTL = { expirationTtl: 86400 }; // 24 hours
-function markReplied(replyKey) {
-    return getKVNamespace().put(replyKey, 'true', REPLIED_TTL);
+// Mastodon and Bluesky keep notifications in the list indefinitely, so a marker
+// that expires means the bot replies to the same message again every time the
+// marker lapses. A notification we actually replied to is therefore marked
+// PERMANENTLY. Transient skips (debug mode, generation failure) use a short TTL
+// so a later real run can still act on them.
+const TRANSIENT_TTL = { expirationTtl: 86400 }; // 24 hours
+function markReplied(replyKey, { permanent = false } = {}) {
+    return getKVNamespace().put(replyKey, 'true', permanent ? undefined : TRANSIENT_TTL);
+}
+
+// Ignore notifications older than the cutoff. Without this, any lost or expired
+// marker (or a fresh KV namespace) makes the bot reply to years-old mentions.
+function replyMaxAgeMs() {
+    const hours = parseFloat(process.env.REPLY_MAX_AGE_HOURS);
+    return (Number.isFinite(hours) && hours > 0 ? hours : 24) * 60 * 60 * 1000;
+}
+
+function isTooOld(timestamp, context) {
+    if (!timestamp) {
+        // Unknown age: process it. The permanent marker stops it repeating.
+        return false;
+    }
+    const age = Date.now() - new Date(timestamp).getTime();
+    if (!Number.isFinite(age)) {
+        return false;
+    }
+    if (age > replyMaxAgeMs()) {
+        debug('Skipping notification older than the reply cutoff', 'info', {
+            ...context,
+            timestamp,
+            ageHours: Math.round(age / 3600000)
+        });
+        return true;
+    }
+    return false;
 }
 
 // KV namespace for storing posts
@@ -470,6 +500,10 @@ async function handleMastodonReply(notification) {
             }
         });
 
+        if (isTooOld(notification.created_at, { platform: 'mastodon', id: notification.id })) {
+            return;
+        }
+
         // Check if we've already replied to this notification
         const replyKey = `replied:mastodon:${notification.id}`;
         const hasReplied = await getKVNamespace().get(replyKey);
@@ -524,8 +558,8 @@ async function handleMastodonReply(notification) {
         const isOurPost = await getOriginalPost('mastodon', notification.status.id);
         if (isOurPost) {
             debug('Skipping reply to our own post', 'info', { postId: notification.status.id });
-            // Mark as replied to prevent future processing
-            await markReplied(replyKey);
+            // Permanent: whether a post is ours never changes.
+            await markReplied(replyKey, { permanent: true });
             return;
         }
 
@@ -569,9 +603,10 @@ async function handleMastodonReply(notification) {
                 model: getReplyModel()
             });
 
-            // Mark as replied to prevent duplicate replies
-            await markReplied(replyKey);
-            
+            // Permanent: we really replied, and this notification stays in the
+            // Mastodon list forever, so the marker must outlive it.
+            await markReplied(replyKey, { permanent: true });
+
             debug('Successfully posted reply', 'info', {
                 replyId: postedReply.id,
                 inReplyTo: notification.status.id,
@@ -608,6 +643,11 @@ async function handleBlueskyReply(notification) {
         // Load recent posts from storage if needed
         if (recentPosts.size === 0) {
             await loadRecentPostsFromKV();
+        }
+
+        if (isTooOld(notification.indexedAt || notification.record?.createdAt,
+            { platform: 'bluesky', uri: notification.uri })) {
+            return;
         }
 
         // Check if this is a reply to one of our posts
@@ -700,7 +740,7 @@ async function handleBlueskyReply(notification) {
             context: originalPost,
             model: getReplyModel()
         });
-        await markReplied(replyKey);
+        await markReplied(replyKey, { permanent: true });
         debug('Successfully replied to Bluesky post', 'info', { replyKey });
 
     } catch (error) {

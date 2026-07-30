@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeAll } from '@jest/globals';
-import { generateReply, initAI, initializeKV, loadRecentPostsFromKV, getOriginalPost } from '../replies.js';
+import { describe, test, expect, beforeAll, beforeEach } from '@jest/globals';
+import { generateReply, initAI, initializeKV, loadRecentPostsFromKV, getOriginalPost, handleMastodonReply } from '../replies.js';
+import { initFeedback } from '../feedback.js';
 import { LocalStorage } from '../kv.js';
 
 describe('generateReply (Workers AI)', () => {
@@ -109,5 +110,42 @@ describe('loadRecentPostsFromKV', () => {
         // A naive split(':') would have stored this as "bluesky:at".
         expect(await getOriginalPost('bluesky', uri)).toBe('hello');
         expect(await getOriginalPost('mastodon', '12345')).toBe('toot');
+    });
+});
+
+describe('reply dedupe + age cutoff', () => {
+    let kv;
+
+    beforeEach(() => {
+        process.env.DEBUG_LEVEL = 'error';
+        delete process.env.REPLY_MAX_AGE_HOURS;
+        kv = new LocalStorage();
+        initializeKV(kv);
+        initFeedback(kv);
+        initAI({ run: async () => ({ response: 'a quip' }) });
+        process.env.DEBUG_MODE = 'true';
+    });
+
+    test('a notification older than the cutoff is skipped entirely', async () => {
+        const old = new Date(Date.now() - 40 * 60 * 60 * 1000).toISOString();
+        await handleMastodonReply({
+            id: 'n1',
+            created_at: old,
+            account: { acct: 'someone' },
+            status: { id: 's1', content: 'hi', in_reply_to_id: 'p1' }
+        });
+        // Nothing marked, nothing recorded — it never got that far.
+        expect(await kv.get('replied:mastodon:n1')).toBeUndefined();
+    });
+
+    test('a recent notification is processed and marked', async () => {
+        await kv.put('post:mastodon:p1', JSON.stringify({ content: 'our post', timestamp: Date.now() }));
+        await handleMastodonReply({
+            id: 'n2',
+            created_at: new Date().toISOString(),
+            account: { acct: 'someone' },
+            status: { id: 's2', content: 'hi there', in_reply_to_id: 'p1' }
+        });
+        expect(await kv.get('replied:mastodon:n2')).toBe('true');
     });
 });
