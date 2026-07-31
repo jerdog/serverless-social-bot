@@ -1,7 +1,5 @@
 import { debug } from './log.js';
-import { debugId } from './bot.js';
 import { recordContent } from './feedback.js';
-import { LocalStorage } from './kv.js';
 import {
     postMastodonStatus,
     getMastodonStatus,
@@ -12,6 +10,18 @@ import {
     updateBlueskySeen
 } from './social.js';
 import { stripHtml, stripMentions, normalizeWhitespace } from './text.js';
+import {
+    getPostsKV,
+    warmRecentPosts,
+    recentPostKeys,
+    getOriginalPost,
+    storeRecentPost
+} from './posts.js';
+
+// Unique id for a reply generated in debug mode (there is no real post id).
+function debugId() {
+    return `debug-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
 
 // Default Workers AI text-generation model. Llama 3.3 70B (fp8, speed-optimized)
 // gives large-model quality for short, quippy replies without a thinking mode —
@@ -60,9 +70,6 @@ function extractReplyText(result) {
     return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*<\/think>/i, '').trim();
 }
 
-// Cache to store our bot's recent posts
-const recentPosts = new Map();
-
 // Mastodon and Bluesky keep notifications in the list indefinitely, so a marker
 // that expires means the bot replies to the same message again every time the
 // marker lapses. A notification we actually replied to is therefore marked
@@ -70,7 +77,7 @@ const recentPosts = new Map();
 // so a later real run can still act on them.
 const TRANSIENT_TTL = { expirationTtl: 86400 }; // 24 hours
 function markReplied(replyKey, { permanent = false } = {}) {
-    return getKVNamespace().put(replyKey, 'true', permanent ? undefined : TRANSIENT_TTL);
+    return getPostsKV().put(replyKey, 'true', permanent ? undefined : TRANSIENT_TTL);
 }
 
 // Ignore notifications older than the cutoff. Without this, any lost or expired
@@ -98,56 +105,6 @@ function isTooOld(timestamp, context) {
         return true;
     }
     return false;
-}
-
-// KV namespace for storing posts
-let _postsKV = null;
-const _localStorage = new LocalStorage();
-
-// Initialize KV namespace
-function initializeKV(namespace) {
-    if (!namespace) {
-        debug('No KV namespace provided, using local storage', 'warn');
-    }
-    _postsKV = namespace || _localStorage;
-}
-
-// Helper to get KV namespace
-function getKVNamespace() {
-    return _postsKV;
-}
-
-// Load recent posts from KV storage
-async function loadRecentPostsFromKV() {
-    if (!_postsKV) {
-        throw new Error('Cannot load posts - KV not initialized');
-    }
-
-    try {
-        const kv = getKVNamespace();
-        debug('Loading posts from storage...', 'info');
-
-        const { keys } = await kv.list({ prefix: 'post:' });
-        const posts = await Promise.all(keys.map(key => kv.get(key.name)));
-
-        // Clear existing cache before loading
-        recentPosts.clear();
-
-        keys.forEach((key, i) => {
-            const post = posts[i];
-            if (post) {
-                // Keep everything after "post:" verbatim: Bluesky ids are AT URIs
-                // (at://did:plc:.../...) that themselves contain colons, so a naive
-                // split(':') would truncate them to "bluesky:at" and collide.
-                recentPosts.set(key.name.slice('post:'.length), JSON.parse(post));
-            }
-        });
-
-        debug('Loaded posts from storage', 'info', { count: recentPosts.size });
-    } catch (error) {
-        debug('Error loading posts from storage:', 'error', error);
-        throw error;
-    }
 }
 
 // Helper function to extract post ID from Mastodon URL
@@ -243,116 +200,6 @@ async function fetchPostContent(postUrl) {
     } else {
         throw new Error('Unsupported platform URL');
     }
-}
-
-// Store a new post from our bot
-async function storeRecentPost(platform, postId, content) {
-    debug('Storing recent post', 'info', {
-        platform,
-        postId,
-        content: content.substring(0, 50) + '...',
-        cacheSize: recentPosts.size
-    });
-
-    const key = `${platform}:${postId}`;
-    const post = { content, timestamp: Date.now() };
-    
-    // Store in memory
-    recentPosts.set(key, post);
-
-    // Store in storage
-    try {
-        const kv = getKVNamespace();
-        if (!kv) {
-            throw new Error('Storage not initialized');
-        }
-
-        await kv.put(`post:${key}`, JSON.stringify(post));
-        debug('Stored post in storage', 'info', { 
-            key,
-            postCount: recentPosts.size,
-            storage: 'KV'
-        });
-
-        // Clean up old posts (older than 24 hours)
-        const now = Date.now();
-        const oldPosts = [];
-        for (const [existingKey, existingPost] of recentPosts.entries()) {
-            if (now - existingPost.timestamp > 24 * 60 * 60 * 1000) {
-                oldPosts.push(existingKey);
-            }
-        }
-
-        // Remove old posts
-        for (const oldKey of oldPosts) {
-            debug('Removing old post', 'info', { key: oldKey });
-            recentPosts.delete(oldKey);
-            await kv.delete(`post:${oldKey}`);
-        }
-
-        debug('Storage cleanup complete', 'info', {
-            removed: oldPosts.length,
-            remaining: recentPosts.size
-        });
-    } catch (error) {
-        debug('Error in post storage:', 'error', {
-            error: error.message,
-            stack: error.stack
-        });
-        throw error;
-    }
-}
-
-// Get the original post content
-async function getOriginalPost(platform, postId) {
-    const key = `${platform}:${postId}`;
-    debug('Getting original post', 'info', { key, exists: recentPosts.has(key) });
-
-    // First check memory cache
-    let post = recentPosts.get(key);
-    
-    // If not in memory, try loading from storage
-    if (!post) {
-        try {
-            const kv = getKVNamespace();
-            const storedPost = await kv.get(`post:${key}`);
-            if (storedPost) {
-                try {
-                    post = JSON.parse(storedPost);
-                    // Add back to memory cache
-                    recentPosts.set(key, post);
-                    debug('Loaded post from storage', 'info', { 
-                        key,
-                        content: post.content?.substring(0, 50)
-                    });
-                } catch (parseError) {
-                    debug('Error parsing stored post:', 'error', {
-                        error: parseError,
-                        storedPost
-                    });
-                }
-            } else {
-                debug('Post not found in storage', 'info', { key });
-            }
-        } catch (error) {
-            debug('Error loading post from storage:', 'error', error);
-        }
-    }
-
-    if (!post || !post.content) {
-        debug('Post not found in cache or storage', 'info', { 
-            key,
-            hasPost: !!post,
-            hasContent: !!(post && post.content)
-        });
-        return null;
-    }
-
-    debug('Found post', 'info', { 
-        key, 
-        content: post.content.substring(0, 50) + '...'
-    });
-    return post.content;
 }
 
 // Track backoff state for Workers AI (exponential backoff after a capacity error)
@@ -514,7 +361,7 @@ async function handleMastodonReply(notification) {
 
         // Check if we've already replied to this notification
         const replyKey = `replied:mastodon:${notification.id}`;
-        const hasReplied = await getKVNamespace().get(replyKey);
+        const hasReplied = await getPostsKV().get(replyKey);
         if (hasReplied) {
             debug('Already replied to this notification', 'info', { replyKey });
             return;
@@ -649,9 +496,7 @@ async function handleBlueskyReply(notification) {
         debug('Processing Bluesky reply...', notification);
 
         // Load recent posts from storage if needed
-        if (recentPosts.size === 0) {
-            await loadRecentPostsFromKV();
-        }
+        await warmRecentPosts();
 
         if (isTooOld(notification.indexedAt || notification.record?.createdAt,
             { platform: 'bluesky', uri: notification.uri })) {
@@ -663,15 +508,14 @@ async function handleBlueskyReply(notification) {
         if (!originalPost) {
             debug('Not a reply to our post', 'info', {
                 replyToId: notification.reasonSubject,
-                recentPostsCount: recentPosts.size,
-                recentPostKeys: Array.from(recentPosts.keys())
+                recentPostKeys: recentPostKeys()
             });
             return;
         }
 
         // Check if we've already replied to this post
         const replyKey = `replied:bluesky:${notification.uri}`;
-        const hasReplied = await getKVNamespace().get(replyKey);
+        const hasReplied = await getPostsKV().get(replyKey);
         if (hasReplied) {
             debug('Already replied to this post', 'info', { replyKey });
             return;
@@ -852,9 +696,5 @@ export {
     handleBlueskyReply,
     generateReply,
     fetchPostContent,
-    loadRecentPostsFromKV,
-    storeRecentPost,
-    getOriginalPost,
-    initializeKV,
     initAI
 };

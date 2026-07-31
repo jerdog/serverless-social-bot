@@ -11,6 +11,11 @@ receives. It runs on **Cloudflare Workers**, triggered on a cron schedule and vi
 HTTP endpoints, and persists state in **Cloudflare KV**.
 
 - Runtime: Cloudflare Workers (`nodejs_compat_v2`), Node.js `>=20.5.0` for tooling.
+- **The module graph is acyclic** and layers cleanly; keep it that way. Leaves:
+  `log.js`, `text.js`, `dashboard.js` → `kv.js`, `social.js` → `feedback.js`,
+  `posts.js` → `bot.js`, `replies.js` → `worker.js`. If two feature modules need
+  to share something, push it down into a lower layer rather than importing
+  sideways.
 - Module system: ES modules (`"type": "module"`). Use `import`/`export`, never `require`.
 - No build step — the Worker runs the source directly.
 
@@ -20,7 +25,8 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 | --- | --- |
 | `worker.js` | Cloudflare Worker entry point: `fetch` (HTTP routes) and `scheduled` (cron) handlers, plus `setupEnvironment` which copies Worker bindings into `process.env`. Deliberately thin — platform logic lives in the modules below. |
 | `bot.js` | Core logic: config loading, text cleaning, the `MarkovChain` class, source fetching, and posting to Mastodon/Bluesky. |
-| `replies.js` | Reply handling end to end: `checkNotifications()` polls both platforms, `handleMastodonReply`/`handleBlueskyReply` decide and post, `generateReply()` calls Workers AI. Also holds the in-memory `recentPosts` cache and the `replied:*` dedupe markers. |
+| `replies.js` | Reply handling end to end: `checkNotifications()` polls both platforms, `handleMastodonReply`/`handleBlueskyReply` decide and post, `generateReply()` calls Workers AI. Owns the `replied:*` dedupe markers. |
+| `posts.js` | Owns the `POSTS_KV` binding and the in-memory cache of the bot's own recent posts (`storeRecentPost`, `getOriginalPost`, `warmRecentPosts`). Sits between `bot.js` (writes) and `replies.js` (reads) so neither imports the other. |
 | `feedback.js` | Records every generated post/reply into `POSTS_KV` under a `feedback:` prefix and stores per-item up/down votes for model tuning. |
 | `dashboard.js` | Returns the self-contained HTML feedback dashboard served at `/dashboard`. |
 | `kv.js` | KV helpers for storing/retrieving batched **source tweets** (the Markov training corpus), plus the reusable `LocalStorage` in-memory KV shim. |
@@ -48,8 +54,9 @@ HTTP endpoints, and persists state in **Cloudflare KV**.
 - **Two KV namespaces** (see `wrangler.toml`):
   - `SOURCE_TWEETS` — the Markov training corpus, written by `/upload-tweets`,
     read by `kv.js`.
-  - `POSTS_KV` — the bot's own recent posts and `replied:*` dedupe markers
-    (managed by `replies.js`), plus `feedback:*` records (managed by `feedback.js`).
+  - `POSTS_KV` — the bot's own recent posts (managed by `posts.js`), the
+    `replied:*` dedupe markers (`replies.js`), and `feedback:*` records
+    (`feedback.js`). One binding, three prefixes.
 - **Feedback recording:** `bot.js` (posts) and `replies.js` (replies) call
   `recordContent()` from `feedback.js` on every generated item, including in
   `DEBUG_MODE`, so the `/dashboard` list is populated even during dry runs. **Posts

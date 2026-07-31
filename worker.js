@@ -1,7 +1,8 @@
 import { debug } from './log.js';
 import { main } from './bot.js';
 import { uploadSourceTweetsFromText, getTweetCount } from './kv.js';
-import { checkNotifications, generateReply, fetchPostContent, initializeKV, initAI } from './replies.js';
+import { checkNotifications, generateReply, fetchPostContent, initAI } from './replies.js';
+import { initPostsKV } from './posts.js';
 import { initFeedback, recordVote, listFeedback, clearFeedback, summarizeFeedback } from './feedback.js';
 import { renderDashboard } from './dashboard.js';
 
@@ -56,7 +57,7 @@ async function setupEnvironment(env) {
         // /dashboard, which never reads it). handleBlueskyReply loads it lazily
         // and getOriginalPost falls back to a direct KV get on a miss.
         if (env.POSTS_KV) {
-            initializeKV(env.POSTS_KV);
+            initPostsKV(env.POSTS_KV);
             initFeedback(env.POSTS_KV);
             debug('KV initialized', 'info');
         } else {

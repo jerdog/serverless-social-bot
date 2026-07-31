@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from '@jest/globals';
-import { generateReply, initAI, initializeKV, loadRecentPostsFromKV, getOriginalPost, handleMastodonReply } from '../replies.js';
+import { generateReply, initAI, handleMastodonReply } from '../replies.js';
+import { initPostsKV, loadRecentPostsFromKV, getOriginalPost } from '../posts.js';
 import { initFeedback } from '../feedback.js';
 import { LocalStorage } from '../kv.js';
 
@@ -104,7 +105,7 @@ describe('loadRecentPostsFromKV', () => {
         await kv.put(`post:bluesky:${uri}`, JSON.stringify({ content: 'hello', timestamp: Date.now() }));
         await kv.put('post:mastodon:12345', JSON.stringify({ content: 'toot', timestamp: Date.now() }));
 
-        await initializeKV(kv);
+        initPostsKV(kv);
         await loadRecentPostsFromKV();
 
         // A naive split(':') would have stored this as "bluesky:at".
@@ -124,7 +125,7 @@ describe('reply dedupe + age cutoff', () => {
         // Debug mode so nothing is actually posted from a test.
         process.env.DEBUG_MODE = 'true';
         kv = new LocalStorage();
-        initializeKV(kv);
+        initPostsKV(kv);
         initFeedback(kv);
         initAI({ run: async () => ({ response: 'a quip' }) });
     });

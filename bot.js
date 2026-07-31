@@ -1,14 +1,9 @@
 import fetch from 'node-fetch';
 import { debug } from './log.js';
 import { getSourceTweets } from './kv.js';
-import { storeRecentPost } from './replies.js';
+import { storeRecentPost } from './posts.js';
 import { recordContent } from './feedback.js';
 import { postMastodonStatus, createBlueskyRecord, getBlueskyAuth } from './social.js';
-
-// Generate a unique id for content created in debug mode (no real post id).
-function debugId() {
-    return `debug-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-}
 
 // HTML processing functions
 // Static entity map, defined once at module scope (cleanText runs it over every
@@ -473,7 +468,7 @@ async function postToMastodon(content) {
                 content,
                 platform: 'mastodon'
             });
-            await recordContent({ type: 'post', platform: 'mastodon', id: debugId(), content, model: 'markov' });
+            await recordContent({ type: 'post', platform: 'mastodon', content, model: 'markov' });
             return true;
         }
 
@@ -498,7 +493,7 @@ async function postToMastodon(content) {
         // Store the post in our cache using the numeric ID
         try {
             await storeRecentPost('mastodon', data.id, content);
-            await recordContent({ type: 'post', platform: 'mastodon', id: data.id, content, model: 'markov' });
+            await recordContent({ type: 'post', platform: 'mastodon', content, model: 'markov' });
             debug('Post stored in cache', 'info', {
                 id: data.id,
                 content: content.substring(0, 50) + '...'
@@ -523,7 +518,7 @@ async function postToBluesky(content) {
                 content,
                 platform: 'bluesky'
             });
-            await recordContent({ type: 'post', platform: 'bluesky', id: debugId(), content, model: 'markov' });
+            await recordContent({ type: 'post', platform: 'bluesky', content, model: 'markov' });
             return true;
         }
 
@@ -559,7 +554,7 @@ async function postToBluesky(content) {
         // Store the post in our cache
         try {
             await storeRecentPost('bluesky', data.uri, content);
-            await recordContent({ type: 'post', platform: 'bluesky', id: data.uri, content, model: 'markov' });
+            await recordContent({ type: 'post', platform: 'bluesky', content, model: 'markov' });
             debug('Post stored in cache', 'info', { uri: data.uri });
         } catch (error) {
             debug('Error storing post:', 'error', error);
@@ -661,4 +656,4 @@ async function main(env) {
 }
 
 // Export for worker
-export { main, MarkovChain, generatePost, loadConfig, cleanText, debugId };
+export { main, MarkovChain, generatePost, loadConfig, cleanText };
